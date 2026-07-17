@@ -186,6 +186,7 @@ $$\max_\theta \frac{1}{T}\sum_t u\!\Big(\textstyle\sum_i w_{i,t}\, r_{i,t+1}\Big
 3. **Momentum** = return t−12..t−2 (skip 1 tháng) — #1
 
 **Data cần:**
+
 | Input | Lấy từ |
 |---|---|
 | Realized return $r_{i,t+1}$ | #1 |
