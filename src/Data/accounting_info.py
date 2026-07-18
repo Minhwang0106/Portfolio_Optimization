@@ -32,17 +32,27 @@ class Sec_Data_Restructure:
         response = requests.get(url, headers=self.header, timeout=30)
         response.raise_for_status()
         company_facts: dict = response.json()
-        shares_fact: dict = company_facts['facts']['dei']
-        fs_fact: dict = company_facts['facts']['us-gaap']
+        facts: dict = company_facts.get('facts', {})
+        if 'dei' not in facts or 'us-gaap' not in facts:
+            raise ValueError(
+                f'{self.ticker}: SEC company facts missing dei/us-gaap taxonomy (cik={cik})'
+            )
+        shares_fact: dict = facts['dei']
+        fs_fact: dict = facts['us-gaap']
         return shares_fact, fs_fact
 
     @staticmethod
-    def listdict_to_df(raw_data: list[dict], ticker: str) -> pd.DataFrame:
+    def _dedup_facts(raw_data: list[dict]) -> dict:
         date_to_val: dict = {}
         for inf in raw_data:
             end_date = inf['end']
             if end_date not in date_to_val or inf['form'].endswith('/A'):
                 date_to_val[end_date] = inf['val']
+        return date_to_val
+
+    @classmethod
+    def listdict_to_df(cls, raw_data: list[dict], ticker: str) -> pd.DataFrame:
+        date_to_val: dict = cls._dedup_facts(raw_data)
         date: list = list(date_to_val.keys())
         val: list = list(date_to_val.values())
         df: pd.DataFrame = pd.DataFrame(val,columns=[ticker],
@@ -68,8 +78,19 @@ class Sec_Data_Restructure:
         return result
 
     def share_compose (self)-> pd.DataFrame:
-        info: list = self.share_info['EntityCommonStockSharesOutstanding'
-                                     ]['units']['shares']
+        if 'EntityCommonStockSharesOutstanding' in self.share_info:
+            unit_key = next(iter(self.share_info[
+                'EntityCommonStockSharesOutstanding']['units']))
+            info: list = self.share_info[
+                'EntityCommonStockSharesOutstanding']['units'][unit_key]
+        elif 'CommonStockSharesOutstanding' in self.fs_info:
+            # multi-class filers (e.g. dual-class common stock) tag shares
+            # outstanding per class, so the dei aggregate above is absent;
+            # fall back to the us-gaap balance-sheet tag.
+            unit_key = next(iter(self.fs_info['CommonStockSharesOutstanding']['units']))
+            info = self.fs_info['CommonStockSharesOutstanding']['units'][unit_key]
+        else:
+            raise ValueError(f'{self.ticker}: no shares-outstanding tag found in dei or us-gaap')
         df: pd.DataFrame = self.listdict_to_df(info,self.ticker)
         df.columns = ['shares']
         mul_index = [(self.ticker, i) for i in list(df.index)]
@@ -78,12 +99,26 @@ class Sec_Data_Restructure:
         df.index.names = ['ticker','date']
         return df
 
-    def line_item_restructure (self, l_item: dict[str, list[str]]):
+    def line_item_restructure (self, l_item: dict[str, list[str | tuple[str, ...]]]):
         description: dict = dict()
         item_dfs: list[pd.DataFrame] = []
         for name, candidate_tags in l_item.items():
             units: list[dict] = []
             for tag in candidate_tags:
+                if isinstance(tag, (list, tuple)):
+                    group_tags = tag
+                    if not all(t in self.fs_info for t in group_tags):
+                        continue
+                    sub_series = []
+                    for t in group_tags:
+                        unit_key = next(iter(self.fs_info[t]['units']))
+                        sub_series.append(self._dedup_facts(self.fs_info[t]['units'][unit_key]))
+                        description.setdefault(name, self.fs_info[t]['description'])
+                    common_dates = set.intersection(*(set(s) for s in sub_series))
+                    for d in common_dates:
+                        total = sum(s[d] for s in sub_series)
+                        units.append({'end': d, 'val': total, 'form': '10-K'})
+                    continue
                 if tag not in self.fs_info:
                     continue
                 unit_key: str = next(iter(self.fs_info[tag]['units']))
@@ -96,6 +131,7 @@ class Sec_Data_Restructure:
             temp_df: pd.DataFrame = self.listdict_to_df(units,name)
             temp_df.index = temp_df.index.map(self.to_calendar_quarter)
             temp_df.index.name = 'date'
+            temp_df = temp_df[~temp_df.index.duplicated(keep='first')]
             item_dfs.append(temp_df)
         df: pd.DataFrame = pd.concat(item_dfs, axis=1)
         list_index: list = df.index.tolist()
