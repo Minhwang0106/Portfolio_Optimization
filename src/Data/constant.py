@@ -6,11 +6,13 @@ import pandas as pd
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
 RAW_FILE_ROOT: Path = PROJECT_ROOT / "Data" / "raw file"
 TICKER_CSV: str = "ticker.csv"
-historical_price: str = "price.csv"
+daily_price: str = "daily_price.csv"
+monthly_price: str = "monthly_price.csv"
 accounting_data: str = "accounting.csv"
 
 TICKER_CSV_PATH: Path = RAW_FILE_ROOT/ TICKER_CSV
-price_csv_path: Path = RAW_FILE_ROOT/ historical_price
+monthly_price_csv_path: Path = RAW_FILE_ROOT/ monthly_price
+daily_price_csv_path: Path = RAW_FILE_ROOT/ daily_price
 accounting_csv_path: Path = RAW_FILE_ROOT/accounting_data
 
 
