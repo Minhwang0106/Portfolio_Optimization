@@ -2,14 +2,19 @@ import pandas as pd
 import requests
 from .accounting_info import Sec_Data_Restructure
 from .price_data import take_price
-from .constant import (
-    ticker, ratio, monthly_price_csv_path, daily_price_csv_path, accounting_csv_path,
+from .exclusion import applicable_ticker as compute_applicable_ticker
+from constant import (
+    ticker_data, ratio,
+    monthly_price_path, daily_price_path,
+    accounting_path, applicable_ticker_path,
 )
 
-def run (ticker=ticker, ratio=ratio,
-         monthly_price_path=monthly_price_csv_path,
-         daily_price_path=daily_price_csv_path,
-         accounting_path=accounting_csv_path)->tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def run (ticker=ticker_data, ratio=ratio,
+         monthly_price_path=monthly_price_path,
+         daily_price_path=daily_price_path,
+         accounting_path=accounting_path,
+         applicable_ticker_path=applicable_ticker_path,
+         )->tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, set[str]]]:
     price_listframe: list[pd.DataFrame] = []
     daily_price_listframe: list[pd.DataFrame] = []
     accounting_listframe: list[pd.DataFrame] = []
@@ -47,14 +52,23 @@ def run (ticker=ticker, ratio=ratio,
     multi_tick_daily_price: pd.DataFrame = pd.concat(daily_price_listframe,axis=0)
     multi_tick_accounting: pd.DataFrame = pd.concat(accounting_listframe,axis=0)
 
+    ticker_overtime: dict[str, set[str]] = compute_applicable_ticker(
+        multi_tick_accounting, multi_tick_price
+    )
+
     monthly_price_path.parent.mkdir(parents=True, exist_ok=True)
     daily_price_path.parent.mkdir(parents=True, exist_ok=True)
     accounting_path.parent.mkdir(parents=True, exist_ok=True)
+    applicable_ticker_path.parent.mkdir(parents=True, exist_ok=True)
     multi_tick_price.to_csv(monthly_price_path)
     multi_tick_daily_price.to_csv(daily_price_path)
     multi_tick_accounting.to_csv(accounting_path)
+    pd.Series(
+        {date: ','.join(sorted(tickers)) for date, tickers in ticker_overtime.items()},
+        name='tickers',
+    ).rename_axis('date').to_csv(applicable_ticker_path)
 
-    return multi_tick_price, multi_tick_daily_price, multi_tick_accounting
+    return multi_tick_price, multi_tick_daily_price, multi_tick_accounting, ticker_overtime
 
 if __name__ == "__main__":
     run()
