@@ -28,6 +28,7 @@ applicable_ticker_path: Path = RAW_DATA_DIR / applicable_ticker
 
 testing_period:pd.DatetimeIndex = pd.date_range("2015-01-01", 
                                                 "2026-01-01", freq='ME')
+risk_aversion: float = 5.0
 
 #Data Preprocessing
 ticker_data: list[str] = pd.read_csv(ticker_path, index_col=0)[
@@ -49,6 +50,25 @@ ratio: dict[str, list[str | tuple[str, ...]]] = {
         ('InterestAndDividendIncomeOperating', 'NoninterestIncome'),
         ('InterestAndFeeIncomeLoansAndLeases', 'NoninterestIncome'),
     ],
+    # RIM clean-surplus needs BV net of NCI and preferred (see Instruction/data-collection-rim.md §4.1).
+    # Most single-class filers never report these tags at all (no NCI, no preferred stock),
+    # so they are optional: missing -> defaults to 0 instead of excluding the ticker.
+    'minority_interest': ['MinorityInterest'],
+    'preferred_stock': ['PreferredStockValue'],
 }
+
+# Fields in `ratio` that legitimately default to 0 when the tag is absent from a filer's
+# XBRL facts (e.g. no NCI, no preferred stock) rather than causing the ticker to be dropped.
+optional_ratio_fields: frozenset[str] = frozenset({'minority_interest', 'preferred_stock'})
 n_quarter: int = 20
 n_month: int = 120
+
+#EPO risk model
+risk_com: int = 60
+risk_correl_com: int = 150
+risk_rolling: int = 3
+risk_n_day: int = 261
+risk_n_month: int = 12
+epo_shrinkage: float = 0.75
+epo_theta: float = 1.0
+

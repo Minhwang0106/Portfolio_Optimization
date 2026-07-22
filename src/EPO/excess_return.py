@@ -24,7 +24,14 @@ def cal_excess_return(price_path: Path, rf_path: Path, start_date: str = "2000-0
     return_df: pd.DataFrame = df_p['adj_close'].unstack(level='ticker').pct_change()
 
     df_rf: pd.DataFrame = pd.read_csv(rf_path)
-    df_rf['date'] = pd.to_datetime(df_rf['date'], format='%Y%m%d')
+    if 'date' not in df_rf.columns:
+        df_rf.rename(columns={df_rf.columns[0]: 'date'}, inplace=True)
+    date_str = df_rf['date'].astype(str)
+    if date_str.str.len().eq(6).all():
+        # monthly FF5 file: YYYYMM, no day-of-month -> snap to month end to match price dates
+        df_rf['date'] = pd.to_datetime(date_str, format='%Y%m') + pd.offsets.MonthEnd(0)
+    else:
+        df_rf['date'] = pd.to_datetime(date_str, format='%Y%m%d')
     df_rf.set_index('date', inplace=True)
     rf_rate: pd.Series = (df_rf['RF'] / 100).rename('RF_rate')  # RF is a stock ticker too, avoid name collision
 

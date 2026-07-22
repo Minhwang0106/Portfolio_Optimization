@@ -99,7 +99,8 @@ class Sec_Data_Restructure:
         df.index.names = ['ticker','date']
         return df
 
-    def line_item_restructure (self, l_item: dict[str, list[str | tuple[str, ...]]]):
+    def line_item_restructure (self, l_item: dict[str, list[str | tuple[str, ...]]],
+                               optional_fields: frozenset[str] = frozenset()):
         description: dict = dict()
         item_dfs: list[pd.DataFrame] = []
         for name, candidate_tags in l_item.items():
@@ -125,6 +126,8 @@ class Sec_Data_Restructure:
                 units.extend(self.fs_info[tag]['units'][unit_key])
                 description.setdefault(name, self.fs_info[tag]['description'])
             if not units:
+                if name in optional_fields:
+                    continue
                 raise ValueError(
                     f"{self.ticker}: none of {candidate_tags} found for '{name}'"
                 )
@@ -134,6 +137,11 @@ class Sec_Data_Restructure:
             temp_df = temp_df[~temp_df.index.duplicated(keep='first')]
             item_dfs.append(temp_df)
         df: pd.DataFrame = pd.concat(item_dfs, axis=1)
+        for name in optional_fields:
+            if name not in df.columns:
+                df[name] = 0.0
+            else:
+                df[name] = df[name].fillna(0.0)
         list_index: list = df.index.tolist()
         multi_index = [(self.ticker,i) for i in list_index]
         multi_index = pd.MultiIndex.from_tuples(multi_index)
