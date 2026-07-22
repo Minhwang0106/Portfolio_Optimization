@@ -11,7 +11,35 @@ def applicable_ticker(
     nq=n_quarter,
     nm=n_month,
     p_path=sp_500_path):
+    """Determine, for each test date, which tickers pass data-availability filters.
 
+    A ticker qualifies at a given date if it: (1) was a historical S&P 500
+    constituent as of that date (per `p_path`), (2) has complete monthly
+    price history over the trailing `nm` months, and (3) has complete
+    accounting data (every column in `account_data`) over the trailing `nq`
+    quarters.
+
+    Args:
+        account_data (pd.DataFrame): MultiIndex ('ticker', 'date') accounting
+            data; may include a 'shares' column which is excluded from the
+            completeness check.
+        monthly_price (pd.DataFrame): MultiIndex ('ticker', 'date') price
+            data with an 'adj_close' column.
+        test_per: Iterable of dates to evaluate.
+        nq (int): Number of trailing quarters of accounting data required.
+        nm (int): Number of trailing months of price data required.
+        p_path: CSV path of historical S&P 500 constituents, with 'date' and
+            'tickers' (comma-separated) columns.
+
+    Returns:
+        dict[str, set[str]]: Mapping of stringified date to the set of
+            qualifying tickers at that date.
+
+    Example:
+        >>> result = applicable_ticker(account_data, monthly_price)
+        >>> result['2020-03-31']
+        {'AAPL', 'MSFT', ...}
+    """
     ticker_overtime: dict[str, set[str]] = {}
 
     monthly_price = monthly_price['adj_close'].unstack(level=0)

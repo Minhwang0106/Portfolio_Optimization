@@ -16,6 +16,21 @@ class Sec_Data_Restructure:
         self.share_info, self.fs_info = self.get_facts(ticker)
 
     def cik_matching(self, ticker: str) -> str:
+        """Look up a ticker's 10-digit zero-padded SEC CIK number.
+
+        Args:
+            ticker (str): Ticker symbol, case-insensitive.
+
+        Returns:
+            str: The CIK, zero-padded to 10 digits (e.g. '0000320193').
+
+        Raises:
+            ValueError: If the ticker is not found in SEC's company list.
+
+        Example:
+            >>> obj.cik_matching('AAPL')
+            '0000320193'
+        """
         ticker = ticker.upper().replace('.','-')
         response = requests.get(self.link, headers=self.header, timeout=30)
         response.raise_for_status()
@@ -27,6 +42,24 @@ class Sec_Data_Restructure:
         raise ValueError(f'{ticker} is unavailable in SEC database')
 
     def get_facts(self, ticker: str):
+        """Fetch a ticker's raw SEC companyfacts and split into dei/us-gaap facts.
+
+        Args:
+            ticker (str): Ticker symbol, case-insensitive.
+
+        Returns:
+            tuple[dict, dict]: (shares_fact, fs_fact) — the raw 'dei' and
+                'us-gaap' fact dictionaries from the SEC companyfacts API.
+
+        Raises:
+            ValueError: If the companyfacts response lacks dei/us-gaap taxonomy.
+            requests.exceptions.RequestException: On HTTP failures.
+
+        Example:
+            >>> shares_fact, fs_fact = obj.get_facts('AAPL')
+            >>> 'EntityCommonStockSharesOutstanding' in shares_fact
+            True
+        """
         cik: str = self.cik_matching(ticker)
         url: str = self.root_companyfacts + cik + '.json'
         response = requests.get(url, headers=self.header, timeout=30)
@@ -43,6 +76,25 @@ class Sec_Data_Restructure:
 
     @staticmethod
     def _dedup_facts(raw_data: list[dict]) -> dict:
+        """Collapse a list of SEC fact entries into one value per end-date.
+
+        When multiple entries share the same 'end' date, an amended filing
+        ('form' ending in '/A') takes precedence over the original.
+
+        Args:
+            raw_data (list[dict]): Fact entries, each with keys 'end', 'val',
+                'form' (as returned by the SEC companyfacts API).
+
+        Returns:
+            dict: Mapping of end-date string to value.
+
+        Example:
+            >>> Sec_Data_Restructure._dedup_facts([
+            ...     {'end': '2020-12-31', 'val': 100, 'form': '10-K'},
+            ...     {'end': '2020-12-31', 'val': 110, 'form': '10-K/A'},
+            ... ])
+            {'2020-12-31': 110}
+        """
         date_to_val: dict = {}
         for inf in raw_data:
             end_date = inf['end']
@@ -52,6 +104,23 @@ class Sec_Data_Restructure:
 
     @classmethod
     def listdict_to_df(cls, raw_data: list[dict], ticker: str) -> pd.DataFrame:
+        """Convert a list of SEC fact entries into a single-column DataFrame.
+
+        Args:
+            raw_data (list[dict]): Fact entries with keys 'end', 'val', 'form'.
+            ticker (str): Column name to use for the values.
+
+        Returns:
+            pd.DataFrame: Indexed by datetime 'date', with one column named
+                `ticker` holding the deduplicated values.
+
+        Example:
+            >>> Sec_Data_Restructure.listdict_to_df(
+            ...     [{'end': '2020-12-31', 'val': 100, 'form': '10-K'}], 'AAPL')
+                        AAPL
+            date
+            2020-12-31   100
+        """
         date_to_val: dict = cls._dedup_facts(raw_data)
         date: list = list(date_to_val.keys())
         val: list = list(date_to_val.values())
@@ -62,6 +131,23 @@ class Sec_Data_Restructure:
 
     @staticmethod
     def to_calendar_quarter(date: pd.Timestamp) -> pd.Timestamp:
+        """Snap a filing end-date to the nearest standard calendar-quarter end.
+
+        Fiscal periods reported by companies don't always land exactly on
+        calendar quarter-ends; this buckets a date into whichever of
+        Mar 31 / Jun 30 / Sep 30 / Dec 31 it belongs to (Jan is treated as
+        belonging to the prior year's Dec 31).
+
+        Args:
+            date (pd.Timestamp): The reported end-date.
+
+        Returns:
+            pd.Timestamp: The corresponding calendar quarter-end date.
+
+        Example:
+            >>> Sec_Data_Restructure.to_calendar_quarter(pd.Timestamp('2020-02-15'))
+            Timestamp('2020-03-31 00:00:00')
+        """
         month, year = date.month, date.year
         if month == 1:
             year, month, day = year - 1, 12, 31
@@ -78,6 +164,25 @@ class Sec_Data_Restructure:
         return result
 
     def share_compose (self)-> pd.DataFrame:
+        """Build a shares-outstanding time series for this instance's ticker.
+
+        Prefers the dei 'EntityCommonStockSharesOutstanding' tag; falls back
+        to the us-gaap 'CommonStockSharesOutstanding' tag for multi-class
+        filers where the dei aggregate is absent.
+
+        Returns:
+            pd.DataFrame: MultiIndex ('ticker', 'date'), single column
+                'shares' with the number of shares outstanding.
+
+        Raises:
+            ValueError: If neither tag is present in the fetched facts.
+
+        Example:
+            >>> obj.share_compose().head(1)
+                              shares
+            ticker date
+            AAPL   2020-01-31  4375479000
+        """
         if 'EntityCommonStockSharesOutstanding' in self.share_info:
             unit_key = next(iter(self.share_info[
                 'EntityCommonStockSharesOutstanding']['units']))
@@ -101,6 +206,36 @@ class Sec_Data_Restructure:
 
     def line_item_restructure (self, l_item: dict[str, list[str | tuple[str, ...]]],
                                optional_fields: frozenset[str] = frozenset()):
+        """Assemble financial-statement line items into one DataFrame.
+
+        For each output field name in `l_item`, tries its candidate SEC tags
+        in order; a candidate may be a single tag or a group (list/tuple) of
+        tags summed together over their common dates. Dates are snapped to
+        calendar quarter-ends via `to_calendar_quarter`.
+
+        Args:
+            l_item (dict[str, list[str | tuple[str, ...]]]): Mapping of
+                output field name to a list of candidate us-gaap tags. Each
+                candidate is either a tag name or a tuple/list of tag names
+                to sum together (e.g. {'revenue': ['Revenues', ('SalesA','SalesB')]}).
+            optional_fields (frozenset[str]): Field names that may be missing
+                entirely from the filings; such fields are filled with 0.0
+                instead of raising.
+
+        Returns:
+            pd.DataFrame: MultiIndex ('ticker', 'date'), one column per key
+                in `l_item`.
+
+        Raises:
+            ValueError: If a required (non-optional) field has no matching
+                tag data available.
+
+        Example:
+            >>> obj.line_item_restructure({'revenue': ['Revenues']}).head(1)
+                                    revenue
+            ticker date
+            AAPL   2020-03-31  58313000000
+        """
         description: dict = dict()
         item_dfs: list[pd.DataFrame] = []
         for name, candidate_tags in l_item.items():
