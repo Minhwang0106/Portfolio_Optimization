@@ -1,5 +1,6 @@
 import pandas as pd
 import requests
+from constant import share_tags
 
 
 class Sec_Data_Restructure:
@@ -163,19 +164,32 @@ class Sec_Data_Restructure:
         assert isinstance(result, pd.Timestamp)
         return result
 
-    def share_compose (self)-> pd.DataFrame:
+    def share_compose (self, share_tags=share_tags)-> pd.DataFrame:
         """Build a shares-outstanding time series for this instance's ticker.
 
-        Prefers the dei 'EntityCommonStockSharesOutstanding' tag; falls back
-        to the us-gaap 'CommonStockSharesOutstanding' tag for multi-class
-        filers where the dei aggregate is absent.
+        Walks `share_tags` in order of preference and takes each tag's value
+        only on the dates no higher-priority tag already covers, so the dei
+        cover-page count wins wherever it is usable and the rest only fill its
+        gaps. Two SEC realities force this:
+
+        - Multi-class and reorganized filers tag the cover-page count *per
+          share class*, and the non-dimensional fact that companyfacts exposes
+          then comes back as a literal 0 (e.g. every TAP entry, and SPG from
+          2010 on). Non-positive values are therefore discarded, not trusted.
+        - The dei tag can be absent or near-empty (DDOG has none; SPG has four
+          entries), which leaves the series too sparse to fill from.
+
+        Args:
+            share_tags (tuple[tuple[str, str], ...]): Candidate (taxonomy, tag)
+                pairs, highest priority first. 'dei' reads the dei facts, any
+                other taxonomy reads the us-gaap facts.
 
         Returns:
             pd.DataFrame: MultiIndex ('ticker', 'date'), single column
                 'shares' with the number of shares outstanding.
 
         Raises:
-            ValueError: If neither tag is present in the fetched facts.
+            ValueError: If no candidate tag yields a positive value.
 
         Example:
             >>> obj.share_compose().head(1)
@@ -183,21 +197,26 @@ class Sec_Data_Restructure:
             ticker date
             AAPL   2020-01-31  4375479000
         """
-        if 'EntityCommonStockSharesOutstanding' in self.share_info:
-            unit_key = next(iter(self.share_info[
-                'EntityCommonStockSharesOutstanding']['units']))
-            info: list = self.share_info[
-                'EntityCommonStockSharesOutstanding']['units'][unit_key]
-        elif 'CommonStockSharesOutstanding' in self.fs_info:
-            # multi-class filers (e.g. dual-class common stock) tag shares
-            # outstanding per class, so the dei aggregate above is absent;
-            # fall back to the us-gaap balance-sheet tag.
-            unit_key = next(iter(self.fs_info['CommonStockSharesOutstanding']['units']))
-            info = self.fs_info['CommonStockSharesOutstanding']['units'][unit_key]
-        else:
-            raise ValueError(f'{self.ticker}: no shares-outstanding tag found in dei or us-gaap')
-        df: pd.DataFrame = self.listdict_to_df(info,self.ticker)
-        df.columns = ['shares']
+        date_to_val: dict = {}
+        for taxonomy, tag in share_tags:
+            facts: dict = self.share_info if taxonomy == 'dei' else self.fs_info
+            if tag not in facts:
+                continue
+            unit_key: str = next(iter(facts[tag]['units']))
+            usable: list = [entry for entry in facts[tag]['units'][unit_key]
+                            if entry['val'] > 0]
+            if not usable:
+                continue
+            date_to_val.update({date: val for date, val
+                                in self._dedup_facts(usable).items()
+                                if date not in date_to_val})
+        if not date_to_val:
+            raise ValueError(f'{self.ticker}: no positive shares-outstanding '
+                             f'value found in any of {share_tags}')
+        df: pd.DataFrame = pd.DataFrame(
+            list(date_to_val.values()), columns=['shares'],
+            index=pd.Index(pd.to_datetime(list(date_to_val.keys())),
+                           name='date')).sort_index()
         mul_index = [(self.ticker, i) for i in list(df.index)]
         mul_index = pd.MultiIndex.from_tuples(mul_index)
         df.index = mul_index

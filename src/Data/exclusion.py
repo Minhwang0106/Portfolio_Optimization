@@ -15,9 +15,11 @@ def applicable_ticker(
 
     A ticker qualifies at a given date if it: (1) was a historical S&P 500
     constituent as of that date (per `p_path`), (2) has complete monthly
-    price history over the trailing `nm` months, and (3) has complete
+    price history over the trailing `nm` months, (3) has complete
     accounting data (every column in `account_data`) over the trailing `nq`
-    quarters.
+    quarters, and (4) never has negative book equity over those same `nq`
+    quarters (PPP_2009.md sec.2 — `btm = log(1 + BE/ME)` is undefined once
+    BE/ME <= -1, so the paper drops these firms).
 
     Args:
         account_data (pd.DataFrame): MultiIndex ('ticker', 'date') accounting
@@ -54,8 +56,17 @@ def applicable_ticker(
         item: account_data[item].unstack(level=0) for item in items
     }
 
+    # Book equity, built the same way as src/PPP/input_generator.generator:
+    # BE = book_value - minority_interest - preferred_stock.
+    book_equity: pd.Series = account_data['book_value']
+    for deduction in ('minority_interest', 'preferred_stock'):
+        if deduction in account_data.columns:
+            book_equity = book_equity - account_data[deduction]
+    unstacked_be: pd.DataFrame = book_equity.unstack(level=0)
+
     for date in test_per:
-        account_begin: pd.Timestamp = date - QuarterEnd(nq)
+        account_asof: pd.Timestamp = date - QuarterEnd(1)
+        account_begin: pd.Timestamp = account_asof - QuarterEnd(nq)
         price_begin: pd.Timestamp = date - pd.DateOffset(months=nm)
         acc_ticker: set[str] | None = None
 
@@ -70,9 +81,16 @@ def applicable_ticker(
                                                      ].dropna(axis=1)
         price_ticker: set[str] = set(temp_price.columns)
 
+        # Keep only tickers with no negative book equity in the window. Tested
+        # as `~(... < 0)` rather than `> 0` so that NaN (missing) stays the
+        # completeness check's job below instead of being dropped twice.
+        be_window: pd.DataFrame = unstacked_be.loc[account_begin:account_asof]
+        positive_be_ticker: set[str] = set(
+            be_window.columns[~(be_window < 0).any(axis=0)])
+
         for item in items:
             unstack_acc: pd.DataFrame = unstacked_items[item]
-            unstack_acc = unstack_acc.loc[account_begin:date].dropna(axis=1)
+            unstack_acc = unstack_acc.loc[account_begin:account_asof].dropna(axis=1)
             temp_ticker: set[str] = set(unstack_acc.columns)
             if acc_ticker is None:
                 acc_ticker = temp_ticker
@@ -81,5 +99,6 @@ def applicable_ticker(
 
         if acc_ticker is None:
             acc_ticker = set()
-        ticker_overtime[str(date)] = acc_ticker & price_ticker & ticker_set
+        ticker_overtime[str(date)] = (acc_ticker & price_ticker
+                                      & ticker_set & positive_be_ticker)
     return ticker_overtime

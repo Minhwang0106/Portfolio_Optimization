@@ -60,10 +60,29 @@ ratio: dict[str, list[str | tuple[str, ...]]] = {
 # Fields in `ratio` that legitimately default to 0 when the tag is absent from a filer's
 # XBRL facts (e.g. no NCI, no preferred stock) rather than causing the ticker to be dropped.
 optional_ratio_fields: frozenset[str] = frozenset({'minority_interest', 'preferred_stock'})
-n_quarter: int = 20
-n_month: int = 120
 
-#EPO risk model
+# Shares-outstanding tags in descending order of preference, as (taxonomy, tag).
+# The dei cover-page count is the point-in-time figure we actually want, but it
+# is thin or zero-valued for multi-class and reorganized filers, so the rest are
+# there to fill the dates it leaves uncovered (see Sec_Data_Restructure.share_compose).
+# The last is a period average rather than a point-in-time count -- accepted as a
+# last resort because a slightly stale share count beats no market cap at all.
+share_tags: tuple[tuple[str, str], ...] = (
+    ('dei', 'EntityCommonStockSharesOutstanding'),
+    ('us-gaap', 'CommonStockSharesOutstanding'),
+    ('us-gaap', 'CommonStockSharesIssued'),
+    ('us-gaap', 'WeightedAverageNumberOfSharesOutstandingBasic'),
+)
+
+# A shares figure is carried forward at most this many rows before going NaN.
+# Filings are quarterly, so ~4 quarters of staleness is the most that can be
+# defended; beyond that the number is invented rather than merely stale.
+share_ffill_month: int = 12
+share_ffill_quarter: int = 4
+n_quarter: int = 20
+n_month: int = 75
+
+#Enhanced Portfolio Optimization(EPO)
 risk_com: int = 60
 risk_correl_com: int = 150
 risk_rolling: int = 3
@@ -71,4 +90,8 @@ risk_n_day: int = 261
 risk_n_month: int = 12
 epo_shrinkage: float = 0.75
 epo_theta: float = 1.0
+
+#Parametric Portfolio Policy
+n_cum_month = 12
+
 

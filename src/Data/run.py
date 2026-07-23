@@ -7,6 +7,7 @@ from constant import (
     ticker_data, ratio, optional_ratio_fields,
     monthly_price_path, daily_price_path,
     accounting_path, applicable_ticker_path,
+    share_ffill_month, share_ffill_quarter,
 )
 
 def run (ticker=ticker_data, ratio=ratio,
@@ -58,12 +59,20 @@ def run (ticker=ticker_data, ratio=ratio,
            accounting: pd.DataFrame = tick_object.line_item_restructure(
                ratio, optional_ratio_fields)
 
+           # Forward-fill only, and only for a bounded number of periods. An
+           # unbounded bfill would invent a share count for every date before
+           # the filer's first XBRL filing (~2009), which is most of the price
+           # history -- and for re-incorporated filers such as DIS and XRX,
+           # whose CIK only carries facts from the reorganisation onward, that
+           # fabrication reaches into the sample period. Leaving those dates
+           # NaN lets the market-cap consumers drop them instead.
            price = pd.concat([price,shares],axis=1).sort_index(level='date')
-           price['shares'] = price['shares'].ffill().bfill()
-           price.dropna(inplace=True)
+           price['shares'] = price['shares'].ffill(limit=share_ffill_month)
+           price.dropna(subset=['close','adj_close'],inplace=True)
 
            accounting = pd.concat([accounting,shares],axis=1).sort_index(level='date')
-           accounting['shares'] = accounting['shares'].ffill().bfill()
+           accounting['shares'] = accounting['shares'].ffill(
+               limit=share_ffill_quarter)
            accounting.dropna(inplace=True)
 
            price_listframe.append(price)
