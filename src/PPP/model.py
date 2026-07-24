@@ -8,12 +8,88 @@ from scipy.optimize import minimize
 from .utils import ppp_op, ppp_weight
 
 class PPP:
+    """Parametric Portfolio Policy (Brandt, Santa-Clara & Valkanov 2009).
+
+    Rather than forecasting each stock's moments, the portfolio weight is
+    parameterised directly as a function of firm characteristics::
+
+        w_it = w_bar_it + (1/N_t) * theta' * x_hat_it
+
+    where `w_bar` is an equal-weighted benchmark and `x_hat` are the
+    cross-sectionally standardized characteristics -- momentum (`mom`),
+    log book-to-market (`btm`) and log size (`me`). The three coefficients in
+    `theta` are fitted once per formation date by maximising realised CRRA
+    utility over a trailing window.
+
+    Call `PPP.Config()` once to build the class-level panels, then instantiate
+    and call `portfolio_weight` per formation date.
+
+    Attributes:
+        characteristics (pd.DataFrame): Class-level. Indexed (ticker, date) with
+            columns ['mom', 'btm', 'me'], unstandardized. Set by `Config`.
+        return_df (pd.DataFrame): Class-level. Monthly simple returns, indexed
+            by date with one column per ticker. Set by `Config`.
+        theta (dict[str, np.ndarray]): Fitted coefficients keyed by
+            stringified formation date.
+        weight (dict[str, np.ndarray]): Portfolio weights keyed by
+            stringified formation date.
+        ticker (list[str]): The universe that survived the last `find_theta`
+            call -- narrower than the argument passed in.
+
+    Example:
+        >>> PPP.Config()
+        >>> model = PPP()
+        >>> model.portfolio_weight('2020-03-31', ['AAPL', 'MSFT', 'JPM'])
+        array([[0.41527..., 0.36118..., 0.22354...]])
+    """
     def __init__(self) -> None:
+        """Create an unfitted model with empty per-date result stores.
+
+        Takes no arguments: the data panels live on the class and must already
+        have been built by `PPP.Config()`.
+
+        Example:
+            >>> model = PPP()
+            >>> model.theta, model.weight
+            ({}, {})
+        """
         self.theta: dict[str, np.ndarray] = {}
         self.weight: dict[str, np.ndarray] = {}
         pass
     @classmethod
     def Config (cls):
+        """Build the class-level characteristic and return panels.
+
+        Reads the raw inputs via `generator()` and derives:
+
+        * `mom` -- 11-month momentum, `P(t-2)/P(t-13) - 1`, skipping the most
+          recent month to avoid the short-term reversal effect.
+        * `btm` -- `log(1 + book_value / market_cap)`.
+        * `me` -- `log(market_cap)`.
+
+        Characteristics are stored *raw*, not standardized: the z-score has to
+        be computed on each formation date's investable universe, which is only
+        known inside `find_theta`. Infinities and NaNs from the logs
+        (`market_cap == 0`, or `BE/ME <= -1`) are normalised to NaN so a single
+        bad name cannot poison a whole date's cross-sectional moments.
+
+        Returns:
+            None. Populates `PPP.characteristics` and `PPP.return_df`.
+
+        Example:
+            >>> PPP.Config()
+            >>> PPP.characteristics.loc['A'].tail(2)
+                             mom       btm         me
+            date
+            2025-10-31  0.183044  0.121993  24.263241
+            2025-11-30  0.201776  0.119438  24.281905
+            >>> PPP.return_df.iloc[-1, :3]
+            ticker
+            A      -0.014327
+            AAPL    0.052881
+            ABBV    0.007194
+            Name: 2025-11-30 00:00:00, dtype: float64
+        """
         input_df: pd.DataFrame = generator()
         col: list[str] = ['mom','btm','me']
         col_val: list[pd.Series] = []
@@ -50,8 +126,55 @@ class PPP:
         mean: np.ndarray = char.mean(axis=-2, keepdims=True)
         std: np.ndarray = char.std(axis=-2, keepdims=True, ddof=1)
         return (char - mean)/std
-    def find_theta (self, date:str|pd.Timestamp,ticker:list[str], 
+    def find_theta (self, date:str|pd.Timestamp,ticker:list[str],
                     n_month: int = 60):
+        """Fit the policy coefficients on the window ending just before `date`.
+
+        Screens `ticker` down to the names with a complete record of all three
+        characteristics over the whole estimation window, standardizes them
+        cross-sectionally per date, then maximises realised CRRA utility over
+        the window by minimising `ppp_op`.
+
+        The window is strictly backward-looking: characteristics are read over
+        `[date - (n_month+1) months, date - 1 month]` and paired with the
+        returns they earn over `[date - n_month months, date]`, so each
+        cross-section is matched with the *next* month's return.
+
+        Args:
+            date (str | pd.Timestamp): Formation date. Strings are parsed with
+                `pd.Timestamp`; should be a month-end.
+            ticker (list[str]): Candidate universe (e.g. the index members
+                applicable at `date`). Narrowed by the completeness screen --
+                the surviving list is stored on `self.ticker`.
+            n_month (int): Length of the estimation window in months. Defaults
+                to 60.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]:
+                * theta, shape `(3,)` -- coefficients on mom, btm, me in the
+                  column order of `PPP.characteristics`.
+                * benchmark, shape `(1, n_t)` -- equal weights over the
+                  surviving universe.
+
+            Also records theta in `self.theta[str(date)]` and the surviving
+            universe in `self.ticker`.
+
+        Note:
+            `theta` is seeded with `np.random.random(3)`, so results vary run to
+            run unless the global numpy seed is fixed.
+
+        Example:
+            >>> PPP.Config()
+            >>> model = PPP()
+            >>> theta, benchmark = model.find_theta('2020-03-31',
+            ...                                     ['AAPL', 'MSFT', 'JPM'])
+            >>> theta
+            array([ 0.42317..., -0.18402...,  0.07655...])
+            >>> benchmark
+            array([[0.33333333, 0.33333333, 0.33333333]])
+            >>> model.ticker
+            ['AAPL', 'JPM', 'MSFT']
+        """
         if isinstance(date,str):
             date = pd.Timestamp(date)
         idx = pd.IndexSlice
@@ -97,6 +220,39 @@ class PPP:
         return res.x, benchmark_port
     def portfolio_weight (self, date:str|pd.Timestamp, ticker:list[str],
                           n_month: int = 60):
+        """Fit theta and apply it to `date`'s cross-section to get weights.
+
+        Calls `find_theta` for the coefficients, then standardizes the
+        characteristics observed *on* `date` (over the surviving universe only)
+        and tilts the equal-weighted benchmark by them.
+
+        Args:
+            date (str | pd.Timestamp): Formation date; the weights are the ones
+                to hold from `date` into the following month.
+            ticker (list[str]): Candidate universe, before the completeness
+                screen.
+            n_month (int): Estimation window length in months, passed straight
+                through to `find_theta`. Defaults to 60.
+
+        Returns:
+            np.ndarray: Weights of shape `(1, n_t)` summing to one, ordered to
+                match `self.ticker` (sorted alphabetically, and shorter than
+                the `ticker` argument whenever names were screened out).
+                Individual weights may be negative -- the policy is
+                unconstrained, so shorts are allowed. Also stored in
+                `self.weight[str(date)]`.
+
+        Example:
+            >>> PPP.Config()
+            >>> model = PPP()
+            >>> w = model.portfolio_weight('2020-03-31', ['AAPL', 'MSFT', 'JPM'])
+            >>> w
+            array([[0.41527..., 0.22354..., 0.36118...]])
+            >>> model.ticker
+            ['AAPL', 'JPM', 'MSFT']
+            >>> w.sum()
+            np.float64(1.0)
+        """
         if isinstance(date,str):
             date = pd.Timestamp(date)
         # `ticker` is the raw applicable universe; find_theta narrows it to the
