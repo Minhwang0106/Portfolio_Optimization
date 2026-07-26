@@ -57,11 +57,14 @@ def applicable_ticker(
     }
 
     # Book equity, built the same way as src/PPP/input_generator.generator:
-    # BE = book_value - minority_interest - preferred_stock.
+    # BE = book_value - preferred_stock. NCI is already netted out of
+    # 'book_value' by the data layer (see constant.ratio), so deducting
+    # 'minority_interest' here as well would double count it -- which used to
+    # flip the sign of book equity on ~200 rows and drop those firms from the
+    # universe as if they had negative equity.
     book_equity: pd.Series = account_data['book_value']
-    for deduction in ('minority_interest', 'preferred_stock'):
-        if deduction in account_data.columns:
-            book_equity = book_equity - account_data[deduction]
+    if 'preferred_stock' in account_data.columns:
+        book_equity = book_equity - account_data['preferred_stock']
     unstacked_be: pd.DataFrame = book_equity.unstack(level=0)
 
     for date in test_per:

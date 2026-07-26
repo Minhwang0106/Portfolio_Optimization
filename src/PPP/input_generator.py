@@ -113,9 +113,9 @@ def generator (accout_path: Path = accounting_path,
     col_keys: list[str] = ['book_value', 'market_cap' , 'adj_close']
     
     #book value
-    book_value: pd.Series = account_df[
-        'book_value']-account_df['minority_interest'
-                                 ]-account_df['preferred_stock']
+    # NCI is already netted out of 'book_value' by the data layer (see
+    # constant.ratio); only preferred stock is still inside the equity tags.
+    book_value: pd.Series = account_df['book_value']-account_df['preferred_stock']
     columns_value.append(book_value.shift(1))
     #market_cap
     columns_value.append(price_df['close']*price_df['shares'])

@@ -1,6 +1,12 @@
 import pandas as pd
 import requests
-from constant import share_tags
+from constant import (
+    share_tags, share_scale_tolerance, share_multiplier,
+)
+from .utils import (
+    dedup_facts, facts_to_dates, dates_to_df, to_calendar_quarter,
+    fix_misscaled_rows, drop_placeholder_rows,
+)
 
 
 class Sec_Data_Restructure:
@@ -75,95 +81,6 @@ class Sec_Data_Restructure:
         fs_fact: dict = facts['us-gaap']
         return shares_fact, fs_fact
 
-    @staticmethod
-    def _dedup_facts(raw_data: list[dict]) -> dict:
-        """Collapse a list of SEC fact entries into one value per end-date.
-
-        When multiple entries share the same 'end' date, an amended filing
-        ('form' ending in '/A') takes precedence over the original.
-
-        Args:
-            raw_data (list[dict]): Fact entries, each with keys 'end', 'val',
-                'form' (as returned by the SEC companyfacts API).
-
-        Returns:
-            dict: Mapping of end-date string to value.
-
-        Example:
-            >>> Sec_Data_Restructure._dedup_facts([
-            ...     {'end': '2020-12-31', 'val': 100, 'form': '10-K'},
-            ...     {'end': '2020-12-31', 'val': 110, 'form': '10-K/A'},
-            ... ])
-            {'2020-12-31': 110}
-        """
-        date_to_val: dict = {}
-        for inf in raw_data:
-            end_date = inf['end']
-            if end_date not in date_to_val or inf['form'].endswith('/A'):
-                date_to_val[end_date] = inf['val']
-        return date_to_val
-
-    @classmethod
-    def listdict_to_df(cls, raw_data: list[dict], ticker: str) -> pd.DataFrame:
-        """Convert a list of SEC fact entries into a single-column DataFrame.
-
-        Args:
-            raw_data (list[dict]): Fact entries with keys 'end', 'val', 'form'.
-            ticker (str): Column name to use for the values.
-
-        Returns:
-            pd.DataFrame: Indexed by datetime 'date', with one column named
-                `ticker` holding the deduplicated values.
-
-        Example:
-            >>> Sec_Data_Restructure.listdict_to_df(
-            ...     [{'end': '2020-12-31', 'val': 100, 'form': '10-K'}], 'AAPL')
-                        AAPL
-            date
-            2020-12-31   100
-        """
-        date_to_val: dict = cls._dedup_facts(raw_data)
-        date: list = list(date_to_val.keys())
-        val: list = list(date_to_val.values())
-        df: pd.DataFrame = pd.DataFrame(val,columns=[ticker],
-                                        index=pd.Index(date,name='date'))
-        df.index = pd.to_datetime(df.index)
-        return df
-
-    @staticmethod
-    def to_calendar_quarter(date: pd.Timestamp) -> pd.Timestamp:
-        """Snap a filing end-date to the nearest standard calendar-quarter end.
-
-        Fiscal periods reported by companies don't always land exactly on
-        calendar quarter-ends; this buckets a date into whichever of
-        Mar 31 / Jun 30 / Sep 30 / Dec 31 it belongs to (Jan is treated as
-        belonging to the prior year's Dec 31).
-
-        Args:
-            date (pd.Timestamp): The reported end-date.
-
-        Returns:
-            pd.Timestamp: The corresponding calendar quarter-end date.
-
-        Example:
-            >>> Sec_Data_Restructure.to_calendar_quarter(pd.Timestamp('2020-02-15'))
-            Timestamp('2020-03-31 00:00:00')
-        """
-        month, year = date.month, date.year
-        if month == 1:
-            year, month, day = year - 1, 12, 31
-        elif month in (11,12):
-            month, day = 12, 31
-        elif month in (2,3,4):
-            month, day = 3, 31
-        elif month in (5,6,7):
-            month, day = 6, 30
-        else:
-            month, day = 9, 30
-        result = pd.Timestamp(year=year, month=month, day=day)
-        assert isinstance(result, pd.Timestamp)
-        return result
-
     def share_compose (self, share_tags=share_tags)-> pd.DataFrame:
         """Build a shares-outstanding time series for this instance's ticker.
 
@@ -179,6 +96,11 @@ class Sec_Data_Restructure:
         - The dei tag can be absent or near-empty (DDOG has none; SPG has four
           entries), which leaves the series too sparse to fill from.
 
+        Values more than `constant.share_scale_tolerance` times below the
+        ticker's pooled median are dropped as well: some pre-2010 filings tag
+        the count in millions but still declare the unit as shares, which would
+        otherwise put the market cap out by six orders of magnitude.
+
         Args:
             share_tags (tuple[tuple[str, str], ...]): Candidate (taxonomy, tag)
                 pairs, highest priority first. 'dei' reads the dei facts, any
@@ -189,7 +111,14 @@ class Sec_Data_Restructure:
                 'shares' with the number of shares outstanding.
 
         Raises:
-            ValueError: If no candidate tag yields a positive value.
+            ValueError: If no candidate tag yields a positive, plausibly-scaled
+                value.
+
+        Note:
+            The last-resort tag is a period average, so its facts are durations.
+            They are deduplicated on their end-date rather than put through
+            `utils.quarterly_facts`, because differencing a weighted average
+            does not give the next period's average.
 
         Example:
             >>> obj.share_compose().head(1)
@@ -197,7 +126,7 @@ class Sec_Data_Restructure:
             ticker date
             AAPL   2020-01-31  4375479000
         """
-        date_to_val: dict = {}
+        by_tag: list[dict] = []
         for taxonomy, tag in share_tags:
             facts: dict = self.share_info if taxonomy == 'dei' else self.fs_info
             if tag not in facts:
@@ -207,16 +136,42 @@ class Sec_Data_Restructure:
                             if entry['val'] > 0]
             if not usable:
                 continue
-            date_to_val.update({date: val for date, val
-                                in self._dedup_facts(usable).items()
-                                if date not in date_to_val})
-        if not date_to_val:
+            by_tag.append(dedup_facts(usable))
+        # Early XBRL filings sometimes tag the count in millions while still
+        # declaring the unit as shares, so a handful of values come back 1e6 too
+        # small (A reports 394 for 2007-10-31, and 348 as late as 2009). The
+        # pooled median is unaffected by a minority of those, which makes it a
+        # usable yardstick for throwing them out before the tags are merged --
+        # dropping them at this point still lets a lower-priority tag cover the
+        # dates they leave behind.
+        if not by_tag:
             raise ValueError(f'{self.ticker}: no positive shares-outstanding '
                              f'value found in any of {share_tags}')
+        # Largest per-tag median, not the median of everything pooled together.
+        # A filer whose shell-period tags are all a placeholder 1000 (PSKY) drags
+        # a pooled median down far enough to admit its own placeholders; taking
+        # the tags one at a time lets the best-scaled tag set the yardstick.
+        reference: float = max(pd.Series(list(tag_vals.values())).median()
+                               for tag_vals in by_tag)
+        # Banded both ways: the same mis-tagging that reports a count in millions
+        # also shows up inverted, as BRK's five weighted-average facts of ~1.6e12
+        # against a real 1.6e6.
+        floor: float = reference/share_scale_tolerance
+        ceiling: float = reference*share_scale_tolerance
+        date_to_val: dict = {}
+        for tag_vals in by_tag:
+            date_to_val.update({date: val for date, val in tag_vals.items()
+                                if floor <= val <= ceiling
+                                and date not in date_to_val})
+        if not date_to_val:
+            raise ValueError(f'{self.ticker}: no plausibly-scaled '
+                             f'shares-outstanding value found in any of '
+                             f'{share_tags}')
         df: pd.DataFrame = pd.DataFrame(
             list(date_to_val.values()), columns=['shares'],
             index=pd.Index(pd.to_datetime(list(date_to_val.keys())),
                            name='date')).sort_index()
+        df['shares'] = df['shares']*share_multiplier.get(self.ticker, 1.0)
         mul_index = [(self.ticker, i) for i in list(df.index)]
         mul_index = pd.MultiIndex.from_tuples(mul_index)
         df.index = mul_index
@@ -229,14 +184,24 @@ class Sec_Data_Restructure:
 
         For each output field name in `l_item`, tries its candidate SEC tags
         in order; a candidate may be a single tag or a group (list/tuple) of
-        tags summed together over their common dates. Dates are snapped to
-        calendar quarter-ends via `to_calendar_quarter`.
+        tags combined over their common dates. Within a group a tag is added,
+        or subtracted if its name carries a leading '-' -- which is how
+        `constant.ratio` nets non-controlling interests off the equity tag that
+        includes them. A subtracted tag the filer never reports contributes
+        zero rather than voiding the candidate. Each candidate only fills
+        the dates no higher-priority one already covers, so an annual-only
+        fallback cannot overwrite a preferred tag's quarterly figures. Flow
+        items are reduced to single-quarter values (see
+        `utils.quarterly_facts`) and dates are snapped to calendar
+        quarter-ends via `utils.to_calendar_quarter`.
 
         Args:
             l_item (dict[str, list[str | tuple[str, ...]]]): Mapping of
                 output field name to a list of candidate us-gaap tags. Each
-                candidate is either a tag name or a tuple/list of tag names
-                to sum together (e.g. {'revenue': ['Revenues', ('SalesA','SalesB')]}).
+                candidate is either a tag name or a tuple/list of tag names to
+                combine, where a leading '-' subtracts rather than adds
+                (e.g. {'revenue': ['Revenues', ('SalesA','SalesB')],
+                'equity': [('EquityInclNCI', '-MinorityInterest')]}).
             optional_fields (frozenset[str]): Field names that may be missing
                 entirely from the filings; such fields are filled with 0.0
                 instead of raising.
@@ -258,39 +223,57 @@ class Sec_Data_Restructure:
         description: dict = dict()
         item_dfs: list[pd.DataFrame] = []
         for name, candidate_tags in l_item.items():
-            units: list[dict] = []
+            date_to_val: dict = {}
             for tag in candidate_tags:
+                unit_key: str
                 if isinstance(tag, (list, tuple)):
-                    group_tags = tag
-                    if not all(t in self.fs_info for t in group_tags):
+                    added: list[str] = [t for t in tag if not t.startswith('-')]
+                    # A subtracted tag that the filer never reports is nothing to
+                    # net off, not a reason to abandon the candidate: a company
+                    # with no NCI simply has no MinorityInterest fact.
+                    taken: list[str] = [t[1:] for t in tag if t.startswith('-')
+                                        and t[1:] in self.fs_info]
+                    if not all(t in self.fs_info for t in added):
                         continue
-                    sub_series = []
-                    for t in group_tags:
+                    sub_series, minus_series = [], []
+                    for t, bucket in ([(t, sub_series) for t in added]
+                                      + [(t, minus_series) for t in taken]):
                         unit_key = next(iter(self.fs_info[t]['units']))
-                        sub_series.append(self._dedup_facts(self.fs_info[t]['units'][unit_key]))
+                        bucket.append(facts_to_dates(
+                            self.fs_info[t]['units'][unit_key]))
                         description.setdefault(name, self.fs_info[t]['description'])
                     common_dates = set.intersection(*(set(s) for s in sub_series))
-                    for d in common_dates:
-                        total = sum(s[d] for s in sub_series)
-                        units.append({'end': d, 'val': total, 'form': '10-K'})
+                    candidate: dict = {
+                        d: sum(s[d] for s in sub_series)
+                           - sum(s.get(d, 0) for s in minus_series)
+                        for d in common_dates}
+                elif tag in self.fs_info:
+                    unit_key = next(iter(self.fs_info[tag]['units']))
+                    candidate = facts_to_dates(
+                        self.fs_info[tag]['units'][unit_key])
+                    description.setdefault(name, self.fs_info[tag]['description'])
+                else:
                     continue
-                if tag not in self.fs_info:
-                    continue
-                unit_key: str = next(iter(self.fs_info[tag]['units']))
-                units.extend(self.fs_info[tag]['units'][unit_key])
-                description.setdefault(name, self.fs_info[tag]['description'])
-            if not units:
+                # Candidates are ranked, so a later tag only fills dates no
+                # earlier one reached. Pooling them instead would let a
+                # annual-only fallback such as 'Revenues' overwrite the
+                # quarterly figures the preferred tag already supplied.
+                date_to_val.update({d: v for d, v in candidate.items()
+                                    if d not in date_to_val})
+            if not date_to_val:
                 if name in optional_fields:
                     continue
                 raise ValueError(
                     f"{self.ticker}: none of {candidate_tags} found for '{name}'"
                 )
-            temp_df: pd.DataFrame = self.listdict_to_df(units,name)
-            temp_df.index = temp_df.index.map(self.to_calendar_quarter)
+            temp_df: pd.DataFrame = dates_to_df(date_to_val,name)
+            temp_df.index = temp_df.index.map(to_calendar_quarter)
             temp_df.index.name = 'date'
             temp_df = temp_df[~temp_df.index.duplicated(keep='first')]
             item_dfs.append(temp_df)
         df: pd.DataFrame = pd.concat(item_dfs, axis=1)
+        df = fix_misscaled_rows(df, required=list(l_item))
+        df = drop_placeholder_rows(df)
         for name in optional_fields:
             if name not in df.columns:
                 df[name] = 0.0
