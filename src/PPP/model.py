@@ -21,8 +21,9 @@ class PPP:
     `theta` are fitted once per formation date by maximising realised CRRA
     utility over a trailing window.
 
-    Call `PPP.Config()` once to build the class-level panels, then instantiate
-    and call `portfolio_weight` per formation date.
+    `PPP.Config()` builds the class-level panels; `__init__` calls it if it has
+    not run, so `PPP()` works standalone. Instantiate once, then call
+    `portfolio_weight` per formation date.
 
     Attributes:
         characteristics (pd.DataFrame): Class-level. Indexed (ticker, date) with
@@ -45,20 +46,26 @@ class PPP:
     def __init__(self) -> None:
         """Create an unfitted model with empty per-date result stores.
 
-        Takes no arguments: the data panels live on the class and must already
-        have been built by `PPP.Config()`.
+        Takes no arguments: the data panels live on the class. `Config` is
+        called here if it has not run, so a bare `PPP()` works standalone;
+        call it explicitly only to force a rebuild.
 
         Example:
             >>> model = PPP()
             >>> model.theta, model.weight
             ({}, {})
         """
+        PPP.Config()
         self.theta: dict[str, np.ndarray] = {}
         self.weight: dict[str, np.ndarray] = {}
-        pass
     @classmethod
-    def Config (cls):
-        """Build the class-level characteristic and return panels.
+    def Config (cls, force: bool = False):
+        """Build the class-level characteristic and return panels. Idempotent.
+
+        Returns immediately if the panels are already built, so repeat calls
+        cost nothing and cannot reload the data a second time. `force` rebuilds
+        anyway, which is what you want after `Data.run` rewrites a CSV (together
+        with `panel.clear_panel_cache`, since the parse is cached too).
 
         Reads the raw inputs via `generator()` and derives:
 
@@ -72,6 +79,9 @@ class PPP:
         known inside `find_theta`. Infinities and NaNs from the logs
         (`market_cap == 0`, or `BE/ME <= -1`) are normalised to NaN so a single
         bad name cannot poison a whole date's cross-sectional moments.
+
+        Args:
+            force (bool): Rebuild even if already configured. Defaults to False.
 
         Returns:
             None. Populates `PPP.characteristics` and `PPP.return_df`.
@@ -90,6 +100,8 @@ class PPP:
             ABBV    0.007194
             Name: 2025-11-30 00:00:00, dtype: float64
         """
+        if getattr(cls,'_configured',False) and not force:
+            return
         input_df: pd.DataFrame = generator()
         col: list[str] = ['mom','btm','me']
         col_val: list[pd.Series] = []
@@ -114,6 +126,7 @@ class PPP:
         cls.characteristics: pd.DataFrame = df.replace([np.inf,-np.inf],np.nan)
         cls.return_df: pd.DataFrame = input_df['adj_close'
                                                ].unstack(level=0).pct_change()
+        cls._configured: bool = True
     @staticmethod
     def _standardize (char: np.ndarray):
         """Cross-sectional standardization (Brandt-Santa-Clara-Valkanov 2009;

@@ -3,6 +3,7 @@ from pandas.tseries.offsets import QuarterEnd
 from constant import (
     testing_period, n_quarter, n_month, sp_500_path
 )
+from ..panel import book_equity
 
 def applicable_ticker(
     account_data: pd.DataFrame,
@@ -56,16 +57,7 @@ def applicable_ticker(
         item: account_data[item].unstack(level=0) for item in items
     }
 
-    # Book equity, built the same way as src/PPP/input_generator.generator:
-    # BE = book_value - preferred_stock. NCI is already netted out of
-    # 'book_value' by the data layer (see constant.ratio), so deducting
-    # 'minority_interest' here as well would double count it -- which used to
-    # flip the sign of book equity on ~200 rows and drop those firms from the
-    # universe as if they had negative equity.
-    book_equity: pd.Series = account_data['book_value']
-    if 'preferred_stock' in account_data.columns:
-        book_equity = book_equity - account_data['preferred_stock']
-    unstacked_be: pd.DataFrame = book_equity.unstack(level=0)
+    unstacked_be: pd.DataFrame = book_equity(account_data).unstack(level=0)
 
     for date in test_per:
         account_asof: pd.Timestamp = date - QuarterEnd(1)

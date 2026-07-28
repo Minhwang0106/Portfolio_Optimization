@@ -12,22 +12,83 @@ from .utils.sampling_distribution import (
 )
 from .utils.theta import find_theta
 from .utils.variable_tranformation import Ros_Trans, Ate_Trans, Ato_Trans
-from constant import n_quarter_ahead
+from constant import n_quarter_ahead, accounting_path, monthly_price_path
 from .utils.elicitation import parameter_derived
 class RIM_PortOp:
+    """Residual-income portfolio optimisation over simulated characteristics.
+
+    Call `RIM_PortOp.Config()` once to build the class-level panels, then
+    instantiate per formation date. `__init__` calls `Config` itself if it has
+    not run, so a bare `RIM_PortOp(date, ticker)` works standalone; call it
+    explicitly only when you want non-default data paths, and do that before the
+    first instance exists.
+
+    Attributes:
+        general_data (pd.DataFrame): Class-level. The characteristic panel,
+            indexed (ticker, date). Set by `Config`.
+        general_pb, general_bvps, general_rps, general_price (pd.DataFrame):
+            Class-level. The RIM inputs, each unstacked wide. Set by `Config`.
+        ticker_across_time (dict[str, list[str]]): Class-level record of which
+            universe each formation date resolved to, for inspection across a
+            backtest. Not authoritative -- an instance reads its own
+            `self.ticker`, because two instances can share a date.
+        ticker (list[str]): This instance's universe, narrowed by
+            `take_training_data` to the names the panel actually carries.
+    """
     bicop_controls = FitControlsBicop(selection_criterion='aic',
                             family_set=[BicopFamily.gaussian,#type: ignore
                                         BicopFamily.frank, #type: ignore
                                         BicopFamily.clayton]) #type: ignore
 
-    general_data,general_pb, general_bvps, general_rps, general_price = generator()
     ticker_across_time: dict[str, list[str]] = dict()
     # Indexed by CHARACTERISTICS, so the padding is load bearing: 'g' leads
     # that tuple and is modelled untransformed, while the other three are
     # generated on the scale data_generator put them on and have to come back.
     activate_inverse_func: list = [None, Ate_Trans.inverse,
                                    Ato_Trans.inverse, Ros_Trans.inverse]
+
+    @classmethod
+    def Config (cls, acc_path: Path = accounting_path,
+                price_path: Path = monthly_price_path, force: bool = False):
+        """Build the class-level panels. Idempotent.
+
+        Returns immediately if the panels are already built, so calling it in a
+        loop costs nothing and cannot reload the data a second time. `force`
+        rebuilds anyway, which is what you want after `Data.run` rewrites a CSV
+        (together with `panel.clear_panel_cache`, since the parse is cached too).
+
+        Args:
+            acc_path (Path): Accounting panel CSV. Defaults to
+                `constant.accounting_path`.
+            price_path (Path): Monthly price panel CSV. Defaults to
+                `constant.monthly_price_path`.
+            force (bool): Rebuild even if already configured. Defaults to False.
+
+        Returns:
+            None. Populates `general_data`, `general_pb`, `general_bvps`,
+            `general_rps` and `general_price` on the class.
+
+        Example:
+            >>> RIM_PortOp.Config()
+            >>> RIM_PortOp.general_data.columns.tolist()
+            ['ros', 'ato', 'ate', 'g']
+        """
+        if getattr(cls,'_configured',False) and not force:
+            return
+        (cls.general_data, cls.general_pb, cls.general_bvps,
+         cls.general_rps, cls.general_price) = generator(acc_path,price_path)
+        cls._configured: bool = True
+
     def __init__(self, date:str|pd.Timestamp,ticker:list[str]) -> None:
+        """Slice the panels around one formation date.
+
+        Args:
+            date (str | pd.Timestamp): Formation date. Strings are parsed with
+                `pd.Timestamp`.
+            ticker (list[str]): Candidate universe. Narrowed to the names the
+                panel carries; read the survivors from `self.ticker`.
+        """
+        RIM_PortOp.Config()
         if isinstance(date, str):
             self.date: pd.Timestamp = pd.Timestamp(date)
         else:
@@ -35,15 +96,18 @@ class RIM_PortOp:
         cache: tuple[pd.DataFrame,pd.
                      DataFrame,list[str]] = take_training_data(
             RIM_PortOp.general_data,self.date,ticker)
-        # Keyed on the parsed date, never on the argument: '2020-06-30' and the
-        # Timestamp it parses to are the same formation date but not the same
-        # string, and `depedence_structure` reads this back through self.date.
-        self.train_df, self.future_df, RIM_PortOp.ticker_across_time[
-            str(self.date)] = cache
+        # The universe lives on the instance. It used to live only in the
+        # class-level dict below, which is keyed by date alone -- so a second
+        # instance for the same date overwrote the first's universe, and the
+        # first then fitted copulas against tickers it never asked for. The
+        # dict is still written for cross-date inspection, but nothing reads
+        # it back.
+        self.train_df, self.future_df, self.ticker = cache
+        RIM_PortOp.ticker_across_time[str(self.date)] = self.ticker
     def depedence_structure (self):
         controls = RIM_PortOp.bicop_controls
-        tickers: list[str] = RIM_PortOp.ticker_across_time[str(self.date)]
-        
+        tickers: list[str] = self.ticker
+
         outer_df: pd.DataFrame = self.train_df.loc[tickers,'g'
                                                    ].unstack(level='ticker'
                                                              ).dropna()

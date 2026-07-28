@@ -4,7 +4,7 @@ from pathlib import Path
 from constant import (
     accounting_path, monthly_price_path, n_quarter, n_quarter_ahead
 )
-from ..PPP.input_generator import read_csv_file
+from ..panel import read_csv_file, book_equity
 from .utils.variable_tranformation import Ros_Trans, Ate_Trans, Ato_Trans
 
 def generator (acc_path: Path = accounting_path,
@@ -114,9 +114,7 @@ def generator (acc_path: Path = accounting_path,
             acc_df['revenue']/acc_df['total_assets'])
 
         #Assets to Book Values
-        # NCI is already netted out of 'book_value' by the data layer (see
-        # constant.ratio); only preferred stock is still inside the equity tags.
-        book_values: pd.Series = acc_df['book_value']-acc_df['preferred_stock']
+        book_values: pd.Series = book_equity(acc_df)
         col_val['ate'] = Ate_Trans.transform(acc_df['total_assets']/book_values)
 
     #Revenue Growth

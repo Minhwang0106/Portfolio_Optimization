@@ -4,7 +4,7 @@ from pathlib import Path
 from constant import(
     monthly_FF5_path, monthly_price_path
 )
-from ...PPP.input_generator import read_csv_file
+from ...panel import read_csv_file
 
 # Column names as Ken French publishes them, mapped to the namespaced names
 # used everywhere downstream. The prefix is not cosmetic: 'RF' is also the

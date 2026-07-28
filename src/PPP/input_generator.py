@@ -4,54 +4,7 @@ from constant import (
     accounting_path, monthly_price_path
 )
 from pathlib import Path
-
-def read_csv_file (path: Path, date: str|None = 'date',
-                   index: list[str]=['ticker','date'])-> pd.DataFrame:
-    """Read a raw CSV into a sorted, MultiIndexed panel.
-
-    Parses the date column to datetime, sets the index, and sorts it -- the
-    sort matters because every downstream `.loc[idx[ticker, d0:d1], :]` slice
-    needs a lexsorted index.
-
-    Args:
-        path (Path): CSV to read, e.g. `constant.monthly_price_path`.
-        date (str | None): Name of the column to parse as datetime, or None to
-            skip parsing (for files with no date column). Defaults to 'date'.
-        index (list[str]): Columns to use as the index. Defaults to
-            `['ticker', 'date']`.
-
-    Returns:
-        pd.DataFrame: The file's remaining columns, indexed by `index` and
-            sorted.
-
-    Raises:
-        KeyError: If `date` or any name in `index` is not a column of the file.
-
-    Example:
-        Given `monthly_price.csv`::
-
-            ticker,date,close,adj_close,shares
-            A,1999-11-30,30.177038,25.110935,
-            A,1999-12-31,55.302216,46.018112,
-
-        >>> read_csv_file(monthly_price_path).head(2)
-                               close  adj_close  shares
-        ticker date
-        A      1999-11-30  30.177038  25.110935     NaN
-               1999-12-31  55.302216  46.018112     NaN
-    """
-    df: pd.DataFrame = pd.read_csv(path)
-    if date is not None:
-        try:
-            df[date] = pd.to_datetime(df[date])
-        except KeyError:
-            raise KeyError(f"{date} is not in data columns")
-    try:
-        df.set_index(index, inplace=True)
-        df.sort_index(inplace=True)
-    except KeyError as e:
-        raise e
-    return df
+from ..panel import read_csv_file, book_equity
 
 def generator (accout_path: Path = accounting_path,
                price_path: Path = monthly_price_path)->pd.DataFrame:
@@ -113,9 +66,7 @@ def generator (accout_path: Path = accounting_path,
     col_keys: list[str] = ['book_value', 'market_cap' , 'adj_close']
     
     #book value
-    # NCI is already netted out of 'book_value' by the data layer (see
-    # constant.ratio); only preferred stock is still inside the equity tags.
-    book_value: pd.Series = account_df['book_value']-account_df['preferred_stock']
+    book_value: pd.Series = book_equity(account_df)
     columns_value.append(book_value.shift(1))
     #market_cap
     columns_value.append(price_df['close']*price_df['shares'])
