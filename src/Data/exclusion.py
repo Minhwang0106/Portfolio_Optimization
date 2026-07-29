@@ -18,9 +18,12 @@ def applicable_ticker(
     constituent as of that date (per `p_path`), (2) has complete monthly
     price history over the trailing `nm` months, (3) has complete
     accounting data (every column in `account_data`) over the trailing `nq`
-    quarters, and (4) never has negative book equity over those same `nq`
+    quarters, (4) has strictly positive book equity over those same `nq`
     quarters (PPP_2009.md sec.2 — `btm = log(1 + BE/ME)` is undefined once
-    BE/ME <= -1, so the paper drops these firms).
+    BE/ME <= -1, so the paper drops these firms; zero is excluded too, since
+    every consumer divides by book equity), and (5) has strictly positive
+    revenue over that window, which the residual income model both divides by
+    and scales from.
 
     Args:
         account_data (pd.DataFrame): MultiIndex ('ticker', 'date') accounting
@@ -52,7 +55,11 @@ def applicable_ticker(
     historical_ticker = historical_ticker[~historical_ticker.index.duplicated(keep='last')]
     historical_ticker.sort_index(inplace=True)
 
-    items: list[str] = [i for i in account_data.columns if i != 'shares']
+    # Both share columns are excluded, not just the filed one: `adj_shares` is
+    # derived from it and carries the same missingness, so screening on it
+    # would double-count the same gap under a second name.
+    items: list[str] = [i for i in account_data.columns
+                        if i not in ('shares', 'adj_shares')]
     unstacked_items: dict[str, pd.DataFrame] = {
         item: account_data[item].unstack(level=0) for item in items
     }
@@ -76,12 +83,32 @@ def applicable_ticker(
                                                      ].dropna(axis=1)
         price_ticker: set[str] = set(temp_price.columns)
 
-        # Keep only tickers with no negative book equity in the window. Tested
-        # as `~(... < 0)` rather than `> 0` so that NaN (missing) stays the
-        # completeness check's job below instead of being dropped twice.
+        # Keep only tickers with strictly positive book equity in the window.
+        # Tested as `~(... <= 0)` rather than `> 0` so that NaN (missing) stays
+        # the completeness check's job below instead of being dropped twice.
+        # Zero is excluded alongside negative: every consumer divides by book
+        # equity, so a zero is not a milder version of a negative but an
+        # infinity. KDP reports exactly 0 at 2015-12-31 -- one row in the whole
+        # panel -- and under the old `< 0` test it passed, put a +inf in
+        # `Proposed_Model.data_generator`'s price-to-book panel, and killed that
+        # ticker's entire valuation through `terminal_val`'s inf/inf.
         be_window: pd.DataFrame = unstacked_be.loc[account_begin:account_asof]
         positive_be_ticker: set[str] = set(
-            be_window.columns[~(be_window < 0).any(axis=0)])
+            be_window.columns[~(be_window <= 0).any(axis=0)])
+
+        # Same reasoning for revenue, which the residual income model divides by
+        # (`ros = net_income/revenue`) and scales from (`rps = revenue/shares`).
+        # 30 rows of the panel report revenue of exactly 0, across ALK, APA,
+        # INVH, TE, VTRS and XRAY; a zero there makes revenue per share 0, hence
+        # book equity per share 0 on every simulated path, hence a 0/0 terminal
+        # value. XRAY at 2016-03-31 is the case that surfaced it.
+        rev_window: pd.DataFrame = unstacked_items['revenue'].loc[
+            account_begin:account_asof] if 'revenue' in unstacked_items else None
+        if rev_window is None:
+            positive_rev_ticker: set[str] = set(be_window.columns)
+        else:
+            positive_rev_ticker = set(
+                rev_window.columns[~(rev_window <= 0).any(axis=0)])
 
         for item in items:
             unstack_acc: pd.DataFrame = unstacked_items[item]
@@ -94,6 +121,7 @@ def applicable_ticker(
 
         if acc_ticker is None:
             acc_ticker = set()
-        ticker_overtime[str(date)] = (acc_ticker & price_ticker
-                                      & ticker_set & positive_be_ticker)
+        ticker_overtime[str(date)] = (acc_ticker & price_ticker & ticker_set
+                                      & positive_be_ticker
+                                      & positive_rev_ticker)
     return ticker_overtime

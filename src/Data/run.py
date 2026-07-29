@@ -1,14 +1,128 @@
 import pandas as pd
 import requests
 from .accounting_info import Sec_Data_Restructure
-from .price_data import take_price
+from .price_data import take_price, take_splits
+from .split_adjust import adjust_shares
 from .exclusion import applicable_ticker as compute_applicable_ticker
+from ..panel import clear_panel_cache
 from constant import (
     ticker_data, ratio, optional_ratio_fields,
     monthly_price_path, daily_price_path,
-    accounting_path, applicable_ticker_path,
+    accounting_path, applicable_ticker_path, splits_path,
     share_ffill_month, share_ffill_quarter,
 )
+
+def run_splits (ticker=ticker_data, splits_path=splits_path)-> pd.DataFrame:
+    """Fetch and save the split history of every ticker.
+
+    Split factors are what put the back-adjusted price and the point-in-time
+    share count on a common basis; without them market cap is wrong for every
+    date preceding a split. Kept separate from `run` so the table can be
+    refreshed on its own -- it needs only Yahoo, not SEC, and splits are
+    revised far less often than accounting facts.
+
+    Args:
+        ticker: Iterable of ticker symbols to process.
+        splits_path (Path): Output CSV path, columns ['ticker','date',
+            'split_ratio'].
+
+    Returns:
+        pd.DataFrame: Long-format split events for all successful tickers.
+            Tickers that have never split contribute no rows, which is not
+            distinguishable in the output from a ticker that failed -- hence
+            the error log.
+
+    Raises:
+        ValueError: If every ticker failed, so there is nothing to save.
+
+    Example:
+        >>> splits = run_splits(ticker=['AAPL'])
+    """
+    frames: list[pd.DataFrame] = []
+    errors: list[str] = []
+    succeeded: int = 0
+    for tick in ticker:
+        try:
+            series: pd.Series = take_splits(tick)
+            succeeded += 1
+            if len(series):
+                frames.append(series.reset_index().assign(ticker=tick))
+        except (ValueError, requests.exceptions.RequestException) as e:
+            errors.append(f'{tick}: {e}')
+
+    if errors:
+        print(f'{len(errors)} ticker(s) skipped due to errors:')
+        for err in errors:
+            print(f'  - {err}')
+    if not succeeded:
+        raise ValueError('No ticker succeeded; nothing to save.')
+
+    all_splits: pd.DataFrame = (
+        pd.concat(frames, axis=0)[['ticker', 'date', 'split_ratio']]
+        if frames else
+        pd.DataFrame(columns=['ticker', 'date', 'split_ratio'])
+    ).sort_values(['ticker', 'date'])
+
+    splits_path.parent.mkdir(parents=True, exist_ok=True)
+    all_splits.to_csv(splits_path, index=False)
+    return all_splits
+
+
+def run_share_adjustment (splits_path=splits_path,
+                          monthly_price_path=monthly_price_path,
+                          accounting_path=accounting_path,
+                          ) -> dict[str, int]:
+    """Add an `adj_shares` column to every panel carrying a share count.
+
+    `shares` is left exactly as filed. The adjusted count goes in a new column
+    because the adjustment is relative to *today's* split basis: the next time
+    any ticker splits, every stored `adj_shares` for that ticker becomes wrong
+    by the new factor, with nothing in the file to show it. Keeping the raw
+    count means this is re-runnable from `splits.csv` rather than needing the
+    SEC and Yahoo pulls again -- so re-run it after `run_splits`, always.
+
+    Overwriting `shares` in place would lose that, and would also destroy the
+    point-in-time count, which is the honest record of what the filing said.
+
+    Args:
+        splits_path (Path): Split events CSV, as written by `run_splits`.
+        monthly_price_path (Path): Monthly price CSV to rewrite.
+        accounting_path (Path): Accounting CSV to rewrite.
+
+    Returns:
+        dict[str, int]: Number of rows whose adjusted count differs from the
+            filed one, per file.
+
+    Raises:
+        FileNotFoundError: If `splits_path` does not exist yet.
+
+    Example:
+        >>> run_share_adjustment()
+        {'monthly_price.csv': 21451, 'accounting.csv': 5461}
+    """
+    if not splits_path.is_file():
+        raise FileNotFoundError(
+            f'{splits_path} not found; run `run_splits` first.')
+    splits: pd.DataFrame = pd.read_csv(splits_path)
+
+    touched: dict[str, int] = {}
+    for path in (monthly_price_path, accounting_path):
+        frame: pd.DataFrame = pd.read_csv(path)
+        frame['date'] = pd.to_datetime(frame['date'])
+        indexed: pd.DataFrame = frame.set_index(['ticker', 'date']).sort_index()
+        adjusted: pd.Series = adjust_shares(indexed['shares'], splits)
+        indexed['adj_shares'] = adjusted
+        # Both null counts as unchanged; `!=` would call NaN != NaN a change
+        # and report every pre-2009 price row, where no share count exists.
+        both: pd.DataFrame = indexed[['shares', 'adj_shares']].dropna()
+        touched[path.name] = int(
+            (both['adj_shares'] != both['shares']).sum())
+        indexed.reset_index().to_csv(path, index=False)
+
+    # The panels are memoised on path, so a live process would otherwise keep
+    # serving the frames read before this rewrite.
+    clear_panel_cache()
+    return touched
 
 def run (ticker=ticker_data, ratio=ratio,
          optional_ratio_fields=optional_ratio_fields,

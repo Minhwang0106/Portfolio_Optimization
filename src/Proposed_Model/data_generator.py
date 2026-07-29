@@ -2,13 +2,41 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from constant import (
-    accounting_path, monthly_price_path, n_quarter, n_quarter_ahead
+    accounting_path, monthly_price_path, splits_path, n_quarter,
+    n_quarter_ahead
 )
 from ..panel import read_csv_file, book_equity
+from ..Data.split_adjust import adjust_shares
 from .utils.variable_tranformation import Ros_Trans, Ate_Trans, Ato_Trans
 
+def _adjusted_shares (panel: pd.DataFrame, split_path: Path)-> pd.Series:
+    """Split-adjusted share count for a panel, stored column preferred.
+
+    `Data.run.run_share_adjustment` writes `adj_shares` alongside the filed
+    `shares`, and reading it keeps every consumer on one definition. Computing
+    it here when the column is absent means a panel written before that step
+    still values correctly -- the alternative, falling through to `shares`,
+    would reintroduce the split mismatch silently, which is the failure this
+    whole path exists to prevent.
+
+    Args:
+        panel (pd.DataFrame): Panel indexed ('ticker', 'date') carrying a
+            'shares' column, and optionally 'adj_shares'.
+        split_path (Path): Split events CSV, used only on the fallback path.
+
+    Returns:
+        pd.Series: Share count on today's split basis.
+
+    Raises:
+        KeyError: If the panel has no 'shares' column at all.
+    """
+    if 'adj_shares' in panel.columns:
+        return panel['adj_shares']
+    return adjust_shares(panel['shares'], pd.read_csv(split_path))
+
 def generator (acc_path: Path = accounting_path,
-               price_path: Path = monthly_price_path
+               price_path: Path = monthly_price_path,
+               split_path: Path = splits_path
                )->tuple[pd.DataFrame,pd.DataFrame,pd.DataFrame,pd.DataFrame,
                         pd.DataFrame]:
     """Build the characteristic panel, plus the per-share series RIM values on.
@@ -62,6 +90,12 @@ def generator (acc_path: Path = accounting_path,
             * `rps` -- revenue per share, on that same share count.
             * `close` -- the monthly close.
 
+            Both share counts are restated on today's split basis first, since
+            `close` already is; see `src.Data.split_adjust`. Every per-share
+            figure here is therefore per *current* share, not per share as it
+            stood on the date -- consistent with the price, which is what the
+            valuation needs, but not the figure the filing reported.
+
             The last four are unstacked wide, i.e. indexed by date with one
             column per ticker, and are the only ones shaped that way.
 
@@ -98,6 +132,23 @@ def generator (acc_path: Path = accounting_path,
     """
     acc_df: pd.DataFrame = read_csv_file(acc_path)
     price_df: pd.DataFrame = read_csv_file(price_path)
+
+    # Yahoo back-adjusts `close` for splits, so it is quoted in today's shares
+    # at every date, while both share counts come from filings and are
+    # point-in-time. Left alone the two disagree by the split factor for every
+    # date preceding a split -- NVDA's market cap at 2024-06-30 reads $304bn
+    # against a true $3.04tn -- which understates market cap, hence `pb`, hence
+    # the terminal value, for 19% of the panel. Worse than noise: firms split
+    # after the price has risen, so the error marks the eventual winners years
+    # in advance, and the optimiser concentrates into exactly them.
+    #
+    # `adj_shares` is written by `Data.run.run_share_adjustment` and is the
+    # filed count restated on today's split basis. Falling back to computing it
+    # here keeps this callable against a panel written before that step
+    # existed, rather than silently valuing against the unadjusted count.
+    price_shares: pd.Series = _adjusted_shares(price_df, split_path)
+    acc_shares: pd.Series = _adjusted_shares(acc_df, split_path)
+
     col_val: dict[str, pd.Series] = {}
 
     # The transforms are numpy ufuncs, so they map over a Series as they stand;
@@ -137,18 +188,43 @@ def generator (acc_path: Path = accounting_path,
     # The RIM inputs. None of these are characteristics -- they are left on
     # their natural scale and unstacked wide, since the valuation reads them by
     # date across the universe rather than one ticker at a time.
-    market_cap: pd.Series = price_df['close']*price_df['shares']
+    market_cap: pd.Series = price_df['close']*price_shares
     temp = pd.concat([market_cap,book_values],axis=1,keys=['me','be']).dropna()
     pb_df: pd.DataFrame = (temp['me']/temp['be']).unstack(level='ticker')
 
     # Per-share figures take the *accounting* share count, not the price
     # panel's: numerator and denominator then come off the same filing, so a
     # quarter the two panels disagree on cannot show up as a jump in bvps.
-    bvps_df: pd.DataFrame = (book_values/acc_df['shares']
+    # Split-adjusted, because the RIM compares these to `close` directly and
+    # `close` is on today's share basis -- an unadjusted bvps would value a
+    # pre-split quarter's book value per old share against a price per new one.
+    bvps_df: pd.DataFrame = (book_values/acc_shares
                              ).unstack(level='ticker')
-    rps_df: pd.DataFrame = (acc_df['revenue']/acc_df['shares']
+    rps_df: pd.DataFrame = (acc_df['revenue']/acc_shares
                             ).unstack(level='ticker')
     close_df: pd.DataFrame = price_df['close'].unstack(level='ticker')
+
+    # `pb_df` comes off a concat of two panels with different (ticker, date)
+    # indexes, and the union it forms is not ordered -- 2008-06-30, 2008-12-31
+    # and 2009-03-31 land after 2026-06-30. Consumers truncate these at a
+    # formation date with `.loc[:date]`, which on an unsorted DatetimeIndex is a
+    # positional slice to the first occurrence of the label, not a chronological
+    # one: it silently drops the stragglers, and raises outright for any date not
+    # already in the index (i.e. every formation date that is not a quarter end).
+    pb_df = pb_df.sort_index()
+    bvps_df = bvps_df.sort_index()
+    rps_df = rps_df.sort_index()
+    close_df = close_df.sort_index()
+
+    # The same sweep `df` gets below, for the same reason: `me/be` and the two
+    # per-share ratios divide by a quantity that reaches zero. KDP's book equity
+    # is exactly 0 at 2015-12-31, which puts a lone +inf in `pb`, and
+    # `Data.exclusion` does not catch it -- that screen tests `~(be < 0)`, and 0
+    # is not negative. One infinite P/B is enough to kill a whole ticker:
+    # `RIM_PortOp.joint_return` reads it as `max_pb`, and `terminal_val` then
+    # computes (beT + inf)/(be0 + dri + inf) = inf/inf = NaN on every path.
+    for frame in (pb_df, bvps_df, rps_df, close_df):
+        frame.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     #Compose
     df: pd.DataFrame = pd.concat(col_val.values(),axis=1,keys=col_val.keys())
@@ -157,6 +233,45 @@ def generator (acc_path: Path = accounting_path,
     # with a range, which pandas rejects on anything less.
     df.sort_index(inplace=True)
     return df, pb_df, bvps_df, rps_df, close_df
+
+def accounting_cutoff (date: str|pd.Timestamp)->pd.Timestamp:
+    """The most recent quarter whose filing was already public on `date`.
+
+    The single definition of "what the formation date is allowed to have read",
+    so that every consumer of the accounting panel lands on the same quarter.
+    `take_training_data` ends its training window here and
+    `RIM_PortOp.joint_return` takes its revenue per share and its price-to-book
+    extrema from here; when the two computed it separately they disagreed on
+    every date that is not a quarter end -- 88 of the 132 in
+    `constant.testing_period` -- which both compounded simulated growth off the
+    wrong base and read a quarter that may not have been filed.
+
+    Args:
+        date (str | pd.Timestamp): Formation date. Parsed with `pd.Timestamp` if
+            given as a string.
+
+    Returns:
+        pd.Timestamp: The quarter end the formation date may read up to and
+            including.
+
+    Note:
+        A formation date that is itself a quarter end backs off one quarter; any
+        other date backs off two. The asymmetry is deliberate conservatism -- a
+        mid-quarter date sits close enough to the 40-45 day filing deadline that
+        the just-ended quarter may not be public yet -- but it does mean that at,
+        say, 2020-05-15 the cutoff is 2019-12-31 even though Q1 was filed around
+        2020-05-10.
+
+    Example:
+        >>> accounting_cutoff('2020-06-30').date()   # a quarter end
+        datetime.date(2020, 3, 31)
+        >>> accounting_cutoff('2020-05-31').date()   # mid-quarter
+        datetime.date(2019, 12, 31)
+    """
+    if isinstance(date,str):
+        date = pd.Timestamp(date)
+    quarters_back: int = 1 if date.is_quarter_end else 2
+    return date - pd.offsets.QuarterEnd(quarters_back)
 
 def take_training_data (df:pd.DataFrame, date: str|pd.Timestamp,
                         ticker: list[str], nq: int = n_quarter,
@@ -188,8 +303,11 @@ def take_training_data (df:pd.DataFrame, date: str|pd.Timestamp,
         tuple[pd.DataFrame, pd.DataFrame, list[str]]: `(df_train, df_future,
             ticker)`, the first two each a slice of `df` over the requested
             tickers and its window, and the third `ticker` narrowed to the names
-            `df` actually carries -- the universe both slices are on, which the
-            caller needs since it is not the list it passed in.
+            that have at least one row in the *training* window, which the caller
+            needs since it is not the list it passed in. `df_future` is on that
+            same universe but is not what narrows it -- a name can survive here
+            and still have no future rows, which only matters to
+            `RIM_PortOp.sampling(forward=True)`.
 
     Note:
         A formation date that is itself a quarter end backs off one quarter; any
@@ -215,8 +333,7 @@ def take_training_data (df:pd.DataFrame, date: str|pd.Timestamp,
         df = df.sort_index()
     if isinstance(date,str):
         date = pd.Timestamp(date)
-    quarters_back: int = 1 if date.is_quarter_end else 2
-    end_traindate: pd.Timestamp = date - pd.offsets.QuarterEnd(quarters_back)
+    end_traindate: pd.Timestamp = accounting_cutoff(date)
     begin_traindate: pd.Timestamp = end_traindate - pd.offsets.QuarterEnd(nq-1)
 
     begin_futuredata: pd.Timestamp = date if date.is_quarter_end else (
@@ -229,6 +346,18 @@ def take_training_data (df:pd.DataFrame, date: str|pd.Timestamp,
 
     idx = pd.IndexSlice
     df_train: pd.DataFrame = df.loc[idx[ticker,begin_traindate:end_traindate],:]
+
+    # Being in the panel is not the same as being in the *window*: a 2024 listing
+    # is a column of `df` but has no row between 2015 and 2020, and the slice
+    # above drops it silently while `ticker` still names it. Every downstream
+    # `.loc[ticker, ...]` then raises `KeyError: not in index` -- one such name in
+    # a 40-ticker universe takes the whole formation date down. Narrowed on the
+    # training window only: narrowing on the future window as well would pick the
+    # universe partly on data the formation date cannot see.
+    trained: set[str] = set(df_train.index.get_level_values('ticker'))
+    ticker = [t for t in ticker if t in trained]
+
+    df_train = df.loc[idx[ticker,begin_traindate:end_traindate],:]
     df_future: pd.DataFrame = df.loc[idx[ticker,begin_futuredata:end_futuredata],
                                      :]
     return df_train, df_future, ticker
