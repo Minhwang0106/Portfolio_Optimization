@@ -4,13 +4,28 @@ from .accounting_info import Sec_Data_Restructure
 from .price_data import take_price, take_splits
 from .split_adjust import adjust_shares
 from .exclusion import applicable_ticker as compute_applicable_ticker
-from ..panel import clear_panel_cache
+from ..panel import clear_panel_cache, read_csv_file
 from constant import (
     ticker_data, ratio, optional_ratio_fields,
     monthly_price_path, daily_price_path,
     accounting_path, applicable_ticker_path, splits_path,
-    share_ffill_month, share_ffill_quarter,
+    share_ffill_month, share_ffill_quarter, universe_asof,
 )
+
+
+def _write_applicable_ticker (ticker_overtime: dict[str, set[str]],
+                              path=applicable_ticker_path)-> None:
+    """Write the per-date applicable-ticker sets out, one comma-joined row each.
+
+    Shared by `run` and `run_applicable_ticker` so the two cannot write the file
+    in two different shapes; `Empirical_Analysis.data.universe` parses exactly
+    this one.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.Series(
+        {date: ','.join(sorted(tickers)) for date, tickers in ticker_overtime.items()},
+        name='tickers',
+    ).rename_axis('date').to_csv(path)
 
 def run_splits (ticker=ticker_data, splits_path=splits_path)-> pd.DataFrame:
     """Fetch and save the split history of every ticker.
@@ -124,12 +139,58 @@ def run_share_adjustment (splits_path=splits_path,
     clear_panel_cache()
     return touched
 
+def run_applicable_ticker (accounting_path=accounting_path,
+                           monthly_price_path=monthly_price_path,
+                           applicable_ticker_path=applicable_ticker_path,
+                           asof=universe_asof)-> dict[str, set[str]]:
+    """Rebuild the applicable-ticker table from the panels already on disk.
+
+    The universe screen is a pure function of `accounting.csv` and
+    `monthly_price.csv`, so changing `constant.universe_asof` -- or `n_quarter`,
+    or `n_month` -- needs no SEC or Yahoo traffic at all. `run` recomputes this
+    table as its last step, but re-running `run` to get it would re-fetch every
+    ticker for a screen the existing files can already answer.
+
+    Args:
+        accounting_path (Path): Accounting panel CSV, as written by `run`.
+        monthly_price_path (Path): Monthly price panel CSV, as written by `run`.
+        applicable_ticker_path (Path): Output CSV path, overwritten.
+        asof: Freeze date for the candidate pool, or None to reconstitute it per
+            date. Passed to `exclusion.applicable_ticker`; defaults to
+            `constant.universe_asof`.
+
+    Returns:
+        dict[str, set[str]]: Qualifying tickers per stringified date, the same
+            mapping that was written.
+
+    Note:
+        Rewriting the file underneath a live process leaves two caches stale.
+        This clears `panel`'s; a process that has already called
+        `Empirical_Analysis.data.universe` must also call
+        `Empirical_Analysis.data.clear_backtest_cache`, which is not imported
+        here because `Data` does not depend on `Empirical_Analysis`.
+
+    Example:
+        >>> overtime = run_applicable_ticker(asof=None)
+        >>> len(overtime['2025-12-31 00:00:00'])
+        373
+    """
+    accounting: pd.DataFrame = read_csv_file(accounting_path)
+    monthly_price: pd.DataFrame = read_csv_file(monthly_price_path)
+    ticker_overtime: dict[str, set[str]] = compute_applicable_ticker(
+        accounting, monthly_price, asof=asof)
+    _write_applicable_ticker(ticker_overtime, applicable_ticker_path)
+    clear_panel_cache()
+    return ticker_overtime
+
+
 def run (ticker=ticker_data, ratio=ratio,
          optional_ratio_fields=optional_ratio_fields,
          monthly_price_path=monthly_price_path,
          daily_price_path=daily_price_path,
          accounting_path=accounting_path,
          applicable_ticker_path=applicable_ticker_path,
+         universe_asof=universe_asof,
          )->tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, set[str]]]:
     """Build and save the full dataset: prices, accounting facts, and applicable tickers.
 
@@ -149,6 +210,10 @@ def run (ticker=ticker_data, ratio=ratio,
         accounting_path (Path): Output CSV path for accounting data.
         applicable_ticker_path (Path): Output CSV path for the per-date
             applicable-ticker sets.
+        universe_asof: Freeze date for the candidate pool, or None to
+            reconstitute it from S&P 500 membership at every date. Passed to
+            `applicable_ticker`; defaults to `constant.universe_asof`. Changing
+            only this does not need a re-fetch -- use `run_applicable_ticker`.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, set[str]]]:
@@ -203,25 +268,37 @@ def run (ticker=ticker_data, ratio=ratio,
     if not price_listframe or not accounting_listframe:
         raise ValueError('No ticker succeeded; nothing to save.')
 
-    multi_tick_price: pd.DataFrame = pd.concat(price_listframe,axis=0)
-    multi_tick_daily_price: pd.DataFrame = pd.concat(daily_price_listframe,axis=0)
-    multi_tick_accounting: pd.DataFrame = pd.concat(accounting_listframe,axis=0)
+    # Sorted, not merely concatenated. `concat` stacks one ticker's block after
+    # another, which leaves the ('ticker','date') MultiIndex unsorted whenever
+    # the tickers did not arrive in alphabetical order -- and `exclusion`
+    # unstacks this frame and takes a *date slice* of the result, which pandas
+    # refuses on a non-monotonic index. Everything that reads these files back
+    # goes through `panel.read_csv_file`, which sorts on read, so an unsorted
+    # frame only ever bites the one consumer handed it in memory: this function's
+    # own call to `compute_applicable_ticker`, below.
+    multi_tick_price: pd.DataFrame = pd.concat(
+        price_listframe, axis=0).sort_index()
+    multi_tick_daily_price: pd.DataFrame = pd.concat(
+        daily_price_listframe, axis=0).sort_index()
+    multi_tick_accounting: pd.DataFrame = pd.concat(
+        accounting_listframe, axis=0).sort_index()
 
-    ticker_overtime: dict[str, set[str]] = compute_applicable_ticker(
-        multi_tick_accounting, multi_tick_price
-    )
-
+    # The panels are written *before* the universe table is derived from them.
+    # They cost an hour of SEC and Yahoo requests; the table costs seconds and
+    # is a pure function of the two files. Deriving first meant that any error
+    # in the screen -- and the sort bug above was one -- discarded the entire
+    # fetch, with nothing on disk to resume from.
     monthly_price_path.parent.mkdir(parents=True, exist_ok=True)
     daily_price_path.parent.mkdir(parents=True, exist_ok=True)
     accounting_path.parent.mkdir(parents=True, exist_ok=True)
-    applicable_ticker_path.parent.mkdir(parents=True, exist_ok=True)
     multi_tick_price.to_csv(monthly_price_path)
     multi_tick_daily_price.to_csv(daily_price_path)
     multi_tick_accounting.to_csv(accounting_path)
-    pd.Series(
-        {date: ','.join(sorted(tickers)) for date, tickers in ticker_overtime.items()},
-        name='tickers',
-    ).rename_axis('date').to_csv(applicable_ticker_path)
+
+    ticker_overtime: dict[str, set[str]] = compute_applicable_ticker(
+        multi_tick_accounting, multi_tick_price, asof=universe_asof
+    )
+    _write_applicable_ticker(ticker_overtime, applicable_ticker_path)
 
     return multi_tick_price, multi_tick_daily_price, multi_tick_accounting, ticker_overtime
 
