@@ -1,5 +1,6 @@
 import pandas as pd
 import requests
+from pathlib import Path
 from .accounting_info import Sec_Data_Restructure
 from .price_data import take_price, take_splits
 from .split_adjust import adjust_shares
@@ -27,7 +28,48 @@ def _write_applicable_ticker (ticker_overtime: dict[str, set[str]],
         name='tickers',
     ).rename_axis('date').to_csv(path)
 
-def run_splits (ticker=ticker_data, splits_path=splits_path)-> pd.DataFrame:
+def _panel_tickers (path: Path)-> set[str]:
+    """Tickers already written to a panel CSV; empty set if it does not exist.
+
+    Reads the one column, not the file -- `daily_price.csv` is ~200MB and the
+    only question being asked of it is which symbols it already covers.
+    """
+    if not Path(path).is_file():
+        return set()
+    return set(pd.read_csv(path, usecols=['ticker'])['ticker'].astype(str))
+
+
+def _flush_panels (listframes: list[list[pd.DataFrame]], paths: list[Path],
+                   truncate: bool)-> None:
+    """Write the accumulated per-ticker frames out and empty the lists.
+
+    Appends rather than rewrites, which is what keeps a resumed collection from
+    having to hold the panels already on disk in memory. The lists are cleared
+    in place so the caller's accumulators keep only what has not been written
+    yet, bounding peak memory by the checkpoint interval instead of by the
+    length of the ticker list.
+
+    Args:
+        listframes: Accumulators, parallel to `paths`. Cleared on write.
+        paths (list[Path]): Destination CSVs.
+        truncate (bool): Start the file over rather than appending. Set on the
+            first flush of a fresh (non-resumed) collection, so that the
+            previous contents go away only once something has actually been
+            fetched to replace them.
+    """
+    for listframe, path in zip(listframes, paths):
+        if not listframe:
+            continue
+        chunk: pd.DataFrame = pd.concat(listframe, axis=0).sort_index()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # A file that does not exist yet needs its header even mid-resume.
+        fresh: bool = truncate or not path.is_file()
+        chunk.to_csv(path, mode='w' if fresh else 'a', header=fresh)
+        listframe.clear()
+
+
+def run_splits (ticker=ticker_data, splits_path=splits_path,
+                resume: bool = False)-> pd.DataFrame:
     """Fetch and save the split history of every ticker.
 
     Split factors are what put the back-adjusted price and the point-in-time
@@ -40,12 +82,20 @@ def run_splits (ticker=ticker_data, splits_path=splits_path)-> pd.DataFrame:
         ticker: Iterable of ticker symbols to process.
         splits_path (Path): Output CSV path, columns ['ticker','date',
             'split_ratio'].
+        resume (bool): Fetch only tickers with no rows in `splits_path` already
+            and append to it, instead of refetching every symbol and rewriting.
+            For widening the universe, where most of the list is already there.
+            Note that a ticker which has never split leaves no rows, so it is
+            indistinguishable from one never fetched and gets fetched again --
+            one Yahoo call each, and the alternative is a second file recording
+            what was attempted.
 
     Returns:
         pd.DataFrame: Long-format split events for all successful tickers.
             Tickers that have never split contribute no rows, which is not
             distinguishable in the output from a ticker that failed -- hence
-            the error log.
+            the error log. Under `resume` this is the whole file re-read, not
+            just the new rows, so it stays the same table either way.
 
     Raises:
         ValueError: If every ticker failed, so there is nothing to save.
@@ -53,6 +103,12 @@ def run_splits (ticker=ticker_data, splits_path=splits_path)-> pd.DataFrame:
     Example:
         >>> splits = run_splits(ticker=['AAPL'])
     """
+    if resume:
+        done: set[str] = _panel_tickers(splits_path)
+        ticker = [t for t in ticker if t not in done]
+        if not ticker:
+            return pd.read_csv(splits_path)
+
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
     succeeded: int = 0
@@ -79,6 +135,17 @@ def run_splits (ticker=ticker_data, splits_path=splits_path)-> pd.DataFrame:
     ).sort_values(['ticker', 'date'])
 
     splits_path.parent.mkdir(parents=True, exist_ok=True)
+    if resume and splits_path.is_file():
+        # Sorted on the combined table, not the appended block: `adjust_shares`
+        # walks a ticker's events in order, and appending B's splits after Z's
+        # would leave the file grouped by fetch order instead.
+        # `parse_dates`, because the fetched block's 'date' is datetime64 and
+        # the file's is str; concatenating the two gives an object column that
+        # `sort_values` refuses to order.
+        existing: pd.DataFrame = pd.read_csv(splits_path, parse_dates=['date'])
+        all_splits = pd.concat(
+            [existing, all_splits], axis=0
+        ).sort_values(['ticker', 'date'])
     all_splits.to_csv(splits_path, index=False)
     return all_splits
 
@@ -191,6 +258,8 @@ def run (ticker=ticker_data, ratio=ratio,
          accounting_path=accounting_path,
          applicable_ticker_path=applicable_ticker_path,
          universe_asof=universe_asof,
+         resume: bool = False,
+         checkpoint: int = 25,
          )->tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, set[str]]]:
     """Build and save the full dataset: prices, accounting facts, and applicable tickers.
 
@@ -199,6 +268,11 @@ def run (ticker=ticker_data, ratio=ratio,
     computes the set of data-qualifying tickers per date via
     `applicable_ticker`. Results are written to CSV and also returned.
     Tickers that error out (bad data, HTTP failures) are skipped and logged.
+
+    Rows reach disk every `checkpoint` tickers rather than once at the end, so
+    an interrupted collection keeps what it had fetched and `resume` picks the
+    rest up. This is a network-bound job measured in hours; losing it to a
+    dropped connection at ticker 600 is the failure mode worth designing out.
 
     Args:
         ticker: Iterable of ticker symbols to process.
@@ -214,22 +288,54 @@ def run (ticker=ticker_data, ratio=ratio,
             reconstitute it from S&P 500 membership at every date. Passed to
             `applicable_ticker`; defaults to `constant.universe_asof`. Changing
             only this does not need a re-fetch -- use `run_applicable_ticker`.
+        resume (bool): Fetch only tickers absent from the panels on disk and
+            append them, leaving the rows already there untouched. This is the
+            mode for widening the universe -- moving `constant.universe_asof`
+            from a freeze date to None takes the fetch list from 464 names to
+            707, and refetching the ones that already succeeded would be most
+            of the runtime for none of the data. A ticker counts as done only if
+            all three panels carry it, so a symbol whose accounting failed
+            after its prices were written is retried rather than left half
+            collected.
+        checkpoint (int): Flush to disk every this many *fetched* tickers.
+            Lower survives interruption with less lost; higher writes fewer,
+            larger blocks.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, set[str]]]:
-            (monthly_price, daily_price, accounting, ticker_overtime) for
-            all successfully processed tickers combined.
+            (monthly_price, daily_price, accounting, ticker_overtime). The
+            panels are read back from disk, so under `resume` they are the full
+            files -- old rows and new -- not just what this call fetched.
 
     Raises:
-        ValueError: If every ticker fails, so there is nothing to save.
+        ValueError: If every ticker fails, so there is nothing to save. Under
+            `resume` an empty fetch list is not a failure: there is nothing
+            left to collect, and the universe table is rebuilt from what is
+            already on disk.
 
     Example:
         >>> price, daily_price, accounting, applicable = run(ticker=['AAPL'])
     """
+    if resume:
+        already: set[str] = (_panel_tickers(monthly_price_path)
+                             & _panel_tickers(daily_price_path)
+                             & _panel_tickers(accounting_path))
+        remaining: list[str] = [t for t in ticker if t not in already]
+        print(f'resume: {len(already)} ticker(s) on disk, '
+              f'{len(remaining)} to fetch')
+        ticker = remaining
     price_listframe: list[pd.DataFrame] = []
     daily_price_listframe: list[pd.DataFrame] = []
     accounting_listframe: list[pd.DataFrame] = []
     errors: list[str] = []
+    paths: list[Path] = [monthly_price_path, daily_price_path, accounting_path]
+    listframes: list[list[pd.DataFrame]] = [
+        price_listframe, daily_price_listframe, accounting_listframe]
+    # A fresh collection replaces the panels; a resumed one adds to them. Only
+    # the first flush truncates, and only once something has been fetched, so a
+    # run in which every ticker fails leaves the previous files intact.
+    truncate: bool = not resume
+    fetched: int = 0
     for tick in ticker:
         try:
            tick_object: Sec_Data_Restructure = Sec_Data_Restructure(tick)
@@ -257,43 +363,55 @@ def run (ticker=ticker_data, ratio=ratio,
            price_listframe.append(price)
            daily_price_listframe.append(daily_price)
            accounting_listframe.append(accounting)
+           fetched += 1
         except (ValueError, requests.exceptions.RequestException) as e:
             errors.append(f'{tick}: {e}')
+            # `continue`, so the checkpoint below counts fetches and not loop
+            # iterations: a run of failures must not flush three empty lists
+            # and, on the first of them, truncate the panels to nothing.
+            continue
+
+        # The panels are written *before* the universe table is derived from
+        # them. They cost an hour of SEC and Yahoo requests; the table costs
+        # seconds and is a pure function of the two files. Deriving first meant
+        # that any error in the screen -- and the sort bug noted below was one
+        # -- discarded the entire fetch, with nothing on disk to resume from.
+        if fetched % checkpoint == 0:
+            _flush_panels(listframes, paths, truncate)
+            truncate = False
+            print(f'  ... {fetched} fetched, written through {tick}')
 
     if errors:
         print(f'{len(errors)} ticker(s) skipped due to errors:')
         for err in errors:
             print(f'  - {err}')
 
-    if not price_listframe or not accounting_listframe:
-        raise ValueError('No ticker succeeded; nothing to save.')
+    if not fetched:
+        # Under `resume` there is legitimately nothing left to fetch; the
+        # panels on disk are the answer and the universe table still needs
+        # rebuilding off them. Only a fresh run that collected nothing is an
+        # error, since it would have nothing to write.
+        if not resume:
+            raise ValueError('No ticker succeeded; nothing to save.')
+    else:
+        _flush_panels(listframes, paths, truncate)
 
-    # Sorted, not merely concatenated. `concat` stacks one ticker's block after
-    # another, which leaves the ('ticker','date') MultiIndex unsorted whenever
-    # the tickers did not arrive in alphabetical order -- and `exclusion`
-    # unstacks this frame and takes a *date slice* of the result, which pandas
-    # refuses on a non-monotonic index. Everything that reads these files back
-    # goes through `panel.read_csv_file`, which sorts on read, so an unsorted
-    # frame only ever bites the one consumer handed it in memory: this function's
-    # own call to `compute_applicable_ticker`, below.
-    multi_tick_price: pd.DataFrame = pd.concat(
-        price_listframe, axis=0).sort_index()
-    multi_tick_daily_price: pd.DataFrame = pd.concat(
-        daily_price_listframe, axis=0).sort_index()
-    multi_tick_accounting: pd.DataFrame = pd.concat(
-        accounting_listframe, axis=0).sort_index()
-
-    # The panels are written *before* the universe table is derived from them.
-    # They cost an hour of SEC and Yahoo requests; the table costs seconds and
-    # is a pure function of the two files. Deriving first meant that any error
-    # in the screen -- and the sort bug above was one -- discarded the entire
-    # fetch, with nothing on disk to resume from.
-    monthly_price_path.parent.mkdir(parents=True, exist_ok=True)
-    daily_price_path.parent.mkdir(parents=True, exist_ok=True)
-    accounting_path.parent.mkdir(parents=True, exist_ok=True)
-    multi_tick_price.to_csv(monthly_price_path)
-    multi_tick_daily_price.to_csv(daily_price_path)
-    multi_tick_accounting.to_csv(accounting_path)
+    # Read back rather than returned from memory. The blocks were flushed as
+    # they arrived, so no single frame here ever held the whole panel -- which
+    # is the point when `daily_price.csv` runs to hundreds of megabytes and a
+    # resumed run would otherwise have to hold the old rows as well as the new.
+    #
+    # `read_csv_file` also sorts, which the files themselves are not: each
+    # flushed block is sorted within itself, so a file built over several
+    # checkpoints is ordered by fetch order at the block level. `exclusion`
+    # unstacks these frames and takes a *date slice* of the result, which pandas
+    # refuses on a non-monotonic index, so the sort is required and not a
+    # nicety. Every other consumer reads through `read_csv_file` too and so
+    # gets it for free.
+    clear_panel_cache()
+    multi_tick_price: pd.DataFrame = read_csv_file(monthly_price_path)
+    multi_tick_daily_price: pd.DataFrame = read_csv_file(daily_price_path)
+    multi_tick_accounting: pd.DataFrame = read_csv_file(accounting_path)
 
     ticker_overtime: dict[str, set[str]] = compute_applicable_ticker(
         multi_tick_accounting, multi_tick_price, asof=universe_asof
@@ -302,5 +420,63 @@ def run (ticker=ticker_data, ratio=ratio,
 
     return multi_tick_price, multi_tick_daily_price, multi_tick_accounting, ticker_overtime
 
+def main (argv: list[str]|None = None)-> None:
+    """Drive the collection from the command line, in dependency order.
+
+    The order is not arbitrary and the steps are not independent:
+
+    1. `ticker_list.build_ticker_list` writes `ticker.csv`, and what it writes
+       depends on `constant.universe_asof` -- the members at the freeze date,
+       or the union of members across `constant.testing_period` if it is None.
+       Its return value is used rather than `constant.ticker_data`, which was
+       read at import and is stale the moment step 1 writes.
+    2. `run` fetches prices and accounting facts for that list.
+    3. `run_splits` fetches split factors, which
+    4. `run_share_adjustment` needs to put the filed share count on the same
+       basis as the back-adjusted price. It must follow both fetches, and must
+       be re-run after any later `run_splits`.
+    5. `run_applicable_ticker` derives the universe table from the panels.
+       `run` already wrote one in step 2, but that was before the share
+       adjustment, so this is the one that matches the files as they now stand.
+
+    Steps 2 and 3 are the network-bound hours; 4 and 5 are seconds and read
+    only what is already on disk.
+    """
+    import argparse
+    from .ticker_list import build_ticker_list
+
+    parser = argparse.ArgumentParser(
+        description='Collect the price, accounting and universe panels.')
+    parser.add_argument(
+        '--resume', action='store_true',
+        help='fetch only tickers missing from the panels and append them, '
+             'instead of refetching everything. Use after widening the '
+             'universe or to pick up an interrupted collection.')
+    parser.add_argument(
+        '--checkpoint', type=int, default=25,
+        help='flush to disk every N fetched tickers (default: 25)')
+    parser.add_argument(
+        '--skip-fetch', action='store_true',
+        help='skip steps 1-4 and only rebuild the universe table, which is a '
+             'pure function of the panels already collected. This is all that '
+             'changing `constant.universe_asof` needs when the panels already '
+             'cover the wider list.')
+    args = parser.parse_args(argv)
+
+    if not args.skip_fetch:
+        tickers: list[str] = build_ticker_list()
+        print(f'{len(tickers)} ticker(s) in the fetch list '
+              f'(universe_asof={universe_asof})')
+
+        run(ticker=tickers, resume=args.resume, checkpoint=args.checkpoint)
+        run_splits(ticker=tickers, resume=args.resume)
+        print(f'share adjustment: {run_share_adjustment()}')
+
+    overtime: dict[str, set[str]] = run_applicable_ticker()
+    sizes: list[int] = [len(v) for v in overtime.values()]
+    print(f'universe: {len(overtime)} dates, '
+          f'{min(sizes)}-{max(sizes)} tickers per date')
+
+
 if __name__ == "__main__":
-    run()
+    main()

@@ -42,29 +42,49 @@ def kendall_matrix (df: pd.DataFrame)->pd.DataFrame:
     if len(set(col)) != len(col):
         raise ValueError('df must not have duplicate column names')
 
-    n_item: int = len(col)
-    matrix: pd.DataFrame = pd.DataFrame(np.full(shape=(n_item,n_item),
-                                                fill_value=np.nan),
-                                        index=col, columns=col,dtype=np.float64)
-    for item in col:
-        matrix.loc[item,item]=1.0
+    # Every pair at once, as three matrix products, rather than a Python loop
+    # calling scipy once per pair. The outer tree is a 20x260 frame -- 33,670
+    # pairs, 96% of every kendalltau call the model makes -- and at that width
+    # the per-pair `df[[a,b]].dropna()` costs more than the statistic does.
+    #
+    # Writing `s[i,j,c] = sign(x[j,c] - x[i,c])`, zeroed wherever either
+    # observation is missing, gives `sum_ij s[:,:,a]*s[:,:,b] = 2(C - D)` over
+    # exactly the rows both columns are observed on -- which is `S.T @ S`. The
+    # tie correction needs the count of pairs untied in one column and observed
+    # in the other, which is `|S|.T @ V`. Summing ordered pairs rather than
+    # i < j doubles every term, and tau is their ratio, so the factor cancels.
+    values: np.ndarray = df.to_numpy(dtype=np.float64)
+    observed: np.ndarray = ~np.isnan(values)
+    filled: np.ndarray = np.where(observed, values, 0.0)
 
-    for i, col_item in enumerate(col):
-        for item in col[i+1:]:
-            data = df[[col_item,item]].dropna()
-            x = data[col_item]
-            y = data[item]
-            # `cast` rather than the old isinstance(np.float64) check, which
-            # was really there to narrow an untyped tuple element: it also
-            # passed for np.float64('nan'), so a degenerate pair was written as
-            # NaN anyway while a genuine non-result would have been left as the
-            # fill value. Typing it here keeps NaN explicit, see Note above.
-            stats: float = cast(float, kendalltau(x,y)[0])
-            # Both halves, or every consumer that reads a row instead of a
-            # column sees the fill value where a correlation should be.
-            matrix.loc[item,col_item] = stats
-            matrix.loc[col_item,item] = stats
-    return matrix
+    n_obs, n_item = values.shape
+    pairwise_valid: np.ndarray = observed[:,None,:] & observed[None,:,:]
+    sign: np.ndarray = np.sign(filled[None,:,:]-filled[:,None,:])*pairwise_valid
+
+    flat_sign: np.ndarray = sign.reshape(n_obs*n_obs, n_item)
+    flat_valid: np.ndarray = pairwise_valid.reshape(
+        n_obs*n_obs, n_item).astype(np.float64)
+    untied: np.ndarray = np.abs(flat_sign)
+
+    concordance: np.ndarray = flat_sign.T@flat_sign
+    # `untied.T @ flat_valid` counts, for each (a, b), the pairs untied in a and
+    # observed in b; its transpose is that count with the roles swapped. tau-b
+    # divides by the geometric mean of the two.
+    untied_pairs: np.ndarray = untied.T@flat_valid
+    denominator: np.ndarray = np.sqrt(untied_pairs*untied_pairs.T)
+
+    # A constant column, or fewer than two overlapping observations, leaves the
+    # denominator at zero. That is the undefined case the Note describes, and it
+    # has to stay NaN rather than become 0.0 -- `cross_section_order` rejects
+    # NaN but would happily traverse a fabricated zero.
+    with np.errstate(divide='ignore', invalid='ignore'):
+        tau: np.ndarray = np.where(denominator > 0,
+                                   concordance/denominator, np.nan)
+    # Written last because a wholly constant column scores NaN against itself
+    # above, and the diagonal is documented as 1.0 unconditionally.
+    np.fill_diagonal(tau, 1.0)
+
+    return pd.DataFrame(tau, index=col, columns=col, dtype=np.float64)
 
 def cross_section_order (rank_matrix:pd.DataFrame, init:str|None=None
                          )->list[dict[str,list]]:

@@ -1,3 +1,4 @@
+import warnings
 import pandas as pd
 import numpy as np
 from constant import (
@@ -20,6 +21,11 @@ class PPP:
     log book-to-market (`btm`) and log size (`me`). The three coefficients in
     `theta` are fitted once per formation date by maximising realised CRRA
     utility over a trailing window.
+
+    `long_only` defaults to True, which truncates the short leg and renormalises
+    (BSV sec.4) *inside* the fit, so `theta` is estimated on the policy that is
+    actually traded. Pass False for the unconstrained policy of the equation
+    above, which on this universe runs to ~3.6x gross exposure.
 
     `PPP.Config()` builds the class-level panels; `__init__` calls it if it has
     not run, so `PPP()` works standalone. Instantiate once, then call
@@ -140,7 +146,7 @@ class PPP:
         std: np.ndarray = char.std(axis=-2, keepdims=True, ddof=1)
         return (char - mean)/std
     def find_theta (self, date:str|pd.Timestamp,ticker:list[str],
-                    n_month: int = 60):
+                    n_month: int = 60, long_only: bool = True):
         """Fit the policy coefficients on the window ending just before `date`.
 
         Screens `ticker` down to the names with a complete record of all three
@@ -161,6 +167,9 @@ class PPP:
                 the surviving list is stored on `self.ticker`.
             n_month (int): Length of the estimation window in months. Defaults
                 to 60.
+            long_only (bool): Fit the truncated long-only policy rather than the
+                unconstrained one. Defaults to True. The constraint belongs in
+                the fit, not after it -- see `ppp_weight`.
 
         Returns:
             tuple[np.ndarray, np.ndarray]:
@@ -174,7 +183,16 @@ class PPP:
 
         Note:
             `theta` is seeded with `np.random.random(3)`, so results vary run to
-            run unless the global numpy seed is fixed.
+            run unless the global numpy seed is fixed. Measured over 22
+            formation dates, three independent starts agree to within 0.01, so
+            the start is not what moves the answer -- the window is. Across
+            2015-2025 every coefficient changes sign and the norm ranges 1.3 to
+            10.0, which is the unregularised fit, not the optimiser.
+
+        Warns:
+            RuntimeWarning: If `minimize` reports failure. The theta is still
+                returned, since the caller's alternative is no portfolio at all,
+                but it should not be read as a fit.
 
         Example:
             >>> PPP.Config()
@@ -227,12 +245,17 @@ class PPP:
              for c in PPP.characteristics.columns], axis=-1))
         r_arr: np.ndarray = self.return_df.loc[date_1:date,ticker].to_numpy()
 
-        res = minimize(ppp_op, theta, args=(benchmark_port,char_arr,r_arr))
+        res = minimize(ppp_op, theta,
+                       args=(benchmark_port,char_arr,r_arr,long_only))
+        if not res.success:
+            warnings.warn(f'{pd.Timestamp(date).date()}: PPP theta did not '
+                          f'converge ({res.message}); using the last iterate',
+                          RuntimeWarning)
         self.theta[str(date)] = res.x
         self.ticker = ticker
         return res.x, benchmark_port
     def portfolio_weight (self, date:str|pd.Timestamp, ticker:list[str],
-                          n_month: int = 60):
+                          n_month: int = 60, long_only: bool = True):
         """Fit theta and apply it to `date`'s cross-section to get weights.
 
         Calls `find_theta` for the coefficients, then standardizes the
@@ -246,13 +269,17 @@ class PPP:
                 screen.
             n_month (int): Estimation window length in months, passed straight
                 through to `find_theta`. Defaults to 60.
+            long_only (bool): Truncate the shorts and renormalise, and fit theta
+                under that same constraint. Defaults to True. Passed to both
+                `find_theta` and `ppp_weight`, which is the point -- the policy
+                that is fitted has to be the policy that is held.
 
         Returns:
             np.ndarray: Weights of shape `(1, n_t)` summing to one, ordered to
                 match `self.ticker` (sorted alphabetically, and shorter than
                 the `ticker` argument whenever names were screened out).
-                Individual weights may be negative -- the policy is
-                unconstrained, so shorts are allowed. Also stored in
+                Non-negative under `long_only`; otherwise individual weights may
+                be negative, the policy being unconstrained. Also stored in
                 `self.weight[str(date)]`.
 
         Example:
@@ -271,10 +298,10 @@ class PPP:
         # `ticker` is the raw applicable universe; find_theta narrows it to the
         # names with usable characteristics and stores the result on self, so
         # read self.ticker afterwards rather than the argument.
-        theta, benchmark = self.find_theta(date,ticker,n_month)
+        theta, benchmark = self.find_theta(date,ticker,n_month,long_only)
         char: np.ndarray = self._standardize(PPP.characteristics.xs(
             date, level='date').reindex(self.ticker).to_numpy())
-        weight: np.ndarray = ppp_weight(theta,benchmark,char)
+        weight: np.ndarray = ppp_weight(theta,benchmark,char,long_only)
         self.weight[str(date)] = weight
         return weight
         

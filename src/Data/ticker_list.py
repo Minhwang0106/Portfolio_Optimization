@@ -16,6 +16,40 @@ from pathlib import Path
 from constant import sp_500_path, ticker_path, testing_period, universe_asof
 
 
+def parse_members (raw: str)-> set[str]:
+    """Split one snapshot's `tickers` field into normalised symbols.
+
+    Shared with `Data.exclusion`, which reads the same column for the same
+    purpose -- two copies of this drifted apart once already, and a symbol
+    normalised one way for the fetch list and another way for the screen is a
+    name that gets collected and then never used.
+
+    Normalisation is threefold. Uppercased, and '.' mapped to '-', which is the
+    form Yahoo wants ('BRK.B' -> 'BRK-B'). And truncated at the first space:
+    the constituent file carries at least one annotated entry, 'RVTY (Previously
+    PKI)', where the provenance note has leaked into the symbol. Taken literally
+    that is a ticker that cannot resolve at SEC or Yahoo, so Revvity was absent
+    from the fetch list and from every universe built off it -- silently, since
+    a name that is never fetched looks exactly like a name that failed to fetch.
+
+    Args:
+        raw (str): One comma-separated `tickers` field.
+
+    Returns:
+        set[str]: Normalised symbols. Empty fields are dropped.
+
+    Example:
+        >>> sorted(parse_members('AAPL,BRK.B,RVTY (Previously PKI)'))
+        ['AAPL', 'BRK-B', 'RVTY']
+    """
+    out: set[str] = set()
+    for token in raw.split(','):
+        symbol: str = token.strip().split(' ')[0]
+        if symbol:
+            out.add(symbol.upper().replace('.', '-'))
+    return out
+
+
 def constituents (date, path: Path|str = sp_500_path)-> set[str]:
     """S&P 500 members in force at `date`.
 
@@ -25,7 +59,7 @@ def constituents (date, path: Path|str = sp_500_path)-> set[str]:
             with the second comma-separated. Defaults to `constant.sp_500_path`.
 
     Returns:
-        set[str]: Tickers, uppercased with '.' mapped to '-' -- the form Yahoo
+        set[str]: Tickers as `parse_members` normalises them -- the form Yahoo
             and `Data.exclusion` both use. Empty if the file begins after
             `date`.
 
@@ -43,7 +77,7 @@ def constituents (date, path: Path|str = sp_500_path)-> set[str]:
     raw = sp['tickers'].asof(pd.Timestamp(date))
     if not isinstance(raw, str):
         return set()
-    return {t.upper().replace('.', '-') for t in raw.split(',') if t}
+    return parse_members(raw)
 
 
 def build_ticker_list (asof=universe_asof, dates=testing_period,
@@ -55,7 +89,7 @@ def build_ticker_list (asof=universe_asof, dates=testing_period,
     held, however good a later entrant's data turns out to be, so collecting
     anything else is wasted requests. Under `asof=None` the pool reconstitutes
     at every formation date, so the union across `dates` is what is needed.
-    The two differ by a lot -- 464 against 708 -- which is most of the runtime
+    The two differ by a lot -- 464 against 707 -- which is most of the runtime
     of a collection.
 
     Args:

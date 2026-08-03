@@ -28,8 +28,8 @@ def crra_utility (r:np.ndarray, risk_aversion:float = risk_aversion):
     utility: np.ndarray = (1+r)**(1-risk_aversion)/(1-risk_aversion)
     return np.mean(utility)
 
-def ppp_weight (theta:np.ndarray, benchmark: np.ndarray, 
-                char: np.ndarray):
+def ppp_weight (theta:np.ndarray, benchmark: np.ndarray,
+                char: np.ndarray, long_only: bool = True):
     """Tilt a benchmark portfolio by the standardized characteristics.
 
     Implements the policy `w_it = w_bar_it + (1/N_t) * theta' * x_hat_it`: each
@@ -37,6 +37,13 @@ def ppp_weight (theta:np.ndarray, benchmark: np.ndarray,
     `1/N_t` so the tilt does not grow with the size of the universe. Because the
     characteristics are cross-sectionally standardized, the tilts sum to zero
     and the output still sums to one.
+
+    Under `long_only` the short leg is truncated and the remainder renormalised,
+    `w+ = max(w, 0) / sum(max(w, 0))` (Brandt-Santa-Clara-Valkanov 2009 sec.4).
+    Applying it here rather than to the finished weights is the point: `ppp_op`
+    calls this function too, so `theta` is fitted on the policy that will
+    actually be traded. Truncating a theta that was fitted unconstrained would
+    optimise one policy and hold a different one.
 
     Args:
         theta (np.ndarray): Policy coefficients, shape `(n_char,)`, one per
@@ -46,11 +53,12 @@ def ppp_weight (theta:np.ndarray, benchmark: np.ndarray,
         char (np.ndarray): Standardized characteristics, either a single
             cross-section `(n_t, n_char)` or a stacked panel
             `(n_period, n_t, n_char)`. The stock axis is always `-2`.
+        long_only (bool): Truncate the shorts and renormalise. Defaults to True.
 
     Returns:
         np.ndarray: Portfolio weights, shape `(1, n_t)` for a cross-section or
-            `(n_period, n_t)` for a panel. Each row sums to one, and individual
-            weights may be negative (the policy is unconstrained).
+            `(n_period, n_t)` for a panel. Each row sums to one; rows are
+            non-negative under `long_only` and may otherwise go short.
 
     Example:
         >>> theta = np.array([0.3, 0.0, 0.0])
@@ -58,7 +66,7 @@ def ppp_weight (theta:np.ndarray, benchmark: np.ndarray,
         >>> char = np.array([[1., 0., 0.],
         ...                  [0., 1., 0.],
         ...                  [-1., -1., 0.]])
-        >>> ppp_weight(theta, benchmark, char)
+        >>> ppp_weight(theta, benchmark, char, long_only=False)
         array([[0.43333333, 0.33333333, 0.23333333]])
     """
     # Stock axis is -2, never 1: `char` arrives as a (n_t, n_char) cross-section
@@ -66,10 +74,18 @@ def ppp_weight (theta:np.ndarray, benchmark: np.ndarray,
     # find_theta. shape[1] is n_t only in the 3-D case; in the 2-D case it is
     # the characteristic count, which would scale every tilt by n_t/n_char.
     n_t:int = char.shape[-2]
-    return benchmark+char@theta/n_t
+    weight: np.ndarray = benchmark+char@theta/n_t
+    if not long_only:
+        return weight
+    # Per row, never over the whole panel: each period is its own cross-section
+    # and has to sum to one on its own.
+    positive: np.ndarray = np.maximum(weight, 0.0)
+    # The denominator cannot vanish -- the untruncated row sums to one, so
+    # dropping its negative part can only raise the total above one.
+    return positive/positive.sum(axis=-1, keepdims=True)
 
-def ppp_op (theta:np.ndarray, benchmark: np.ndarray, 
-                char: np.ndarray,r_arr:np.ndarray):
+def ppp_op (theta:np.ndarray, benchmark: np.ndarray,
+                char: np.ndarray,r_arr:np.ndarray, long_only: bool = True):
     """Objective function handed to `scipy.optimize.minimize` to fit theta.
 
     Forms the policy weights for every period in the estimation window, earns
@@ -86,9 +102,17 @@ def ppp_op (theta:np.ndarray, benchmark: np.ndarray,
         r_arr (np.ndarray): Realised returns over the same window, shape
             `(n_period, n_t)`, aligned column-for-column with `char`'s stock
             axis.
+        long_only (bool): Fit the truncated policy rather than the unconstrained
+            one; passed straight to `ppp_weight`. Defaults to True.
 
     Returns:
         np.float64: Negative mean CRRA utility of the policy's return series.
+
+    Note:
+        Under `long_only` the truncation puts a kink in the objective wherever a
+        weight crosses zero, so this is not differentiable everywhere and the
+        default quasi-Newton search is working on a piecewise-smooth surface.
+        `find_theta` checks convergence for that reason.
 
     Example:
         >>> theta = np.array([0.3, 0.0, 0.0])
@@ -97,7 +121,7 @@ def ppp_op (theta:np.ndarray, benchmark: np.ndarray,
         ...                   [0., 1., 0.],
         ...                   [-1., -1., 0.]]])          # 1 period, 3 stocks
         >>> r_arr = np.array([[0.02, -0.01, 0.03]])
-        >>> ppp_op(theta, benchmark, char, r_arr)
+        >>> ppp_op(theta, benchmark, char, r_arr, long_only=False)
         np.float64(0.23803...)
 
         Fitting it:
@@ -106,6 +130,6 @@ def ppp_op (theta:np.ndarray, benchmark: np.ndarray,
         >>> minimize(ppp_op, theta, args=(benchmark, char, r_arr)).x
         array([...])
     """
-    weight: np.ndarray = ppp_weight(theta,benchmark,char)
+    weight: np.ndarray = ppp_weight(theta,benchmark,char,long_only)
     r_vec: np.ndarray = np.sum(weight*r_arr, axis=1)
     return -crra_utility(r_vec)

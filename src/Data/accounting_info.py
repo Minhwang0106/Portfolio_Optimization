@@ -1,7 +1,7 @@
 import pandas as pd
 import requests
 from constant import (
-    share_tags, share_scale_tolerance, share_multiplier,
+    share_tags, share_scale_tolerance, share_multiplier, cik_override,
 )
 from .utils import (
     dedup_facts, facts_to_dates, dates_to_df, to_calendar_quarter,
@@ -28,6 +28,15 @@ class Sec_Data_Restructure:
         Args:
             ticker (str): Ticker symbol, case-insensitive.
 
+        `constant.cik_override` is consulted first, for the re-incorporations
+        where SEC's own file points the symbol at a holding company that has
+        filed no financials; see that constant for why the list is deliberately
+        tiny. The override short-circuits the request as well as the match, so
+        an overridden ticker costs no round trip.
+
+        Args:
+            ticker (str): Ticker symbol, case-insensitive.
+
         Returns:
             str: The CIK, zero-padded to 10 digits (e.g. '0000320193').
 
@@ -39,6 +48,8 @@ class Sec_Data_Restructure:
             '0000320193'
         """
         ticker = ticker.upper().replace('.','-')
+        if ticker in cik_override:
+            return cik_override[ticker]
         response = requests.get(self.link, headers=self.header, timeout=30)
         response.raise_for_status()
         ticker_json: dict = response.json()

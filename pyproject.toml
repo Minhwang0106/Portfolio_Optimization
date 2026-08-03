@@ -10,7 +10,24 @@ dependencies = [
     "matplotlib>=3.11.1",
     "numpy>=2.5.1",
     "pandas>=3.0.3",
+    "pyvinecopulib>=0.7.6",
     "requests>=2.34.2",
     "scipy>=1.18.0",
     "yfinance>=1.5.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+# `src` has no __init__.py; the repo root on sys.path makes it importable as a
+# namespace package, the same way the notebooks import it.
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    # Simulation-backed checks on the Sharpe ratio test. Seconds, not
+    # milliseconds: `-m 'not slow'` skips them.
+    "slow: takes long enough that you would notice it in a tight loop",
 ]

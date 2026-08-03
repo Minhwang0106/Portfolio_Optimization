@@ -4,6 +4,7 @@ from constant import (
     testing_period, n_quarter, n_month, sp_500_path, universe_asof
 )
 from ..panel import book_equity
+from .ticker_list import parse_members
 
 def applicable_ticker(
     account_data: pd.DataFrame,
@@ -103,7 +104,10 @@ def applicable_ticker(
         raw_tickers = historical_ticker['tickers'].asof(date)
         if not isinstance(raw_tickers, str):
             return None
-        return {i.upper().replace('.', '-') for i in raw_tickers.split(',')}
+        # Through `parse_members` rather than split-and-upper inline, so the
+        # screen admits symbols in exactly the spelling the fetch list was
+        # built from; see that function for the annotated entries it repairs.
+        return parse_members(raw_tickers)
 
     def screen_at (date: pd.Timestamp)-> set[str]:
         """Filters (2)-(5) at one date. Membership is the caller's business.
