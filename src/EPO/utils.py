@@ -6,7 +6,10 @@ from constant import (daily_FF5_path,
                        daily_price_path,
                        monthly_price_path,
                        applicable_ticker_path,
-                       risk_rolling)
+                       risk_rolling,
+                       risk_aversion,
+                       epo_theta,
+                       epo_shrinkage_grid)
 from .excess_return import cal_excess_return
 
 # populated once per worker process by init_worker, so each process builds
@@ -50,23 +53,34 @@ def init_worker(com, correl_com, n_day, n_month) -> None:
 
 
 def compute_date(date):
-    """Compute volatility, correlation, and TSMOM signal for one date.
+    """Compute volatility, correlation, TSMOM signal, and w-selection inputs
+    for one date.
 
     Uses data cached by `init_worker` in `_worker_data`. Restricts the
     universe to the tickers applicable on `date` (per the applicable-ticker
     table), then computes: annualized EWM volatility over the trailing
     `n_day` days, an EWM correlation matrix from overlapping rolling
-    returns, and a time-series-momentum (TSMOM) signal (sign of trailing
+    returns, a time-series-momentum (TSMOM) signal (sign of trailing
     `n_month`-month compounded return, scaled by volatility and a fixed 10%
-    target).
+    target), the unconstrained closed-form EPO weight at every candidate
+    shrinkage in `constant.epo_shrinkage_grid`, and next month's realised
+    excess return. The last two feed `EPO._select_w`'s out-of-sample search
+    for the shrinkage actually used (`constant.epo_shrinkage`'s docstring);
+    they are computed here, once per date, rather than inside that search,
+    because the risk model and signal it needs are already in hand.
 
     Args:
         date: A date present in the applicable-ticker table's index.
 
     Returns:
-        tuple[str, pd.Series, pd.DataFrame, pd.Series] | None:
-            (date_str, std, correl, tsmom) if the date has an applicable
-            ticker list, else None if no tickers are available for that date.
+        tuple[str, pd.Series, pd.DataFrame, pd.Series, dict[float, pd.Series], pd.Series | None] | None:
+            (date_str, std, correl, tsmom, candidates, realized) if the date
+            has an applicable ticker list, else None if no tickers are
+            available for that date. `candidates` maps each grid point to the
+            unconstrained weight vector it implies, indexed like `tsmom`.
+            `realized` is next month's excess return over the same tickers,
+            or None at the last formation date, where there is no next month
+            to score against.
 
     Raises:
         ValueError: If the computed `std` or `tsmom` isn't a pandas Series
@@ -75,7 +89,7 @@ def compute_date(date):
     Example:
         >>> init_worker(com=60, correl_com=60, n_day=252, n_month=12)
         >>> result = compute_date('2020-03-31')
-        >>> date_str, std, correl, tsmom = result
+        >>> date_str, std, correl, tsmom, candidates, realized = result
     """
     daily_er = _worker_data['daily_er']
     monthly_er = _worker_data['monthly_er']
@@ -110,4 +124,26 @@ def compute_date(date):
     if not isinstance(tsmom, pd.Series):
         raise ValueError('TSMOM should be pandas Series')
 
-    return str(date), std, correl, tsmom
+    # Unconstrained closed-form weight at every candidate shrinkage -- eq. (16)
+    # of the paper, `Sigma_w^-1 @ signal / gamma`, computed once per date so
+    # `EPO._select_w` only ever does arithmetic on cached vectors rather than
+    # re-solving anything.
+    n_stock: int = len(ticker)
+    identity: np.ndarray = np.identity(n_stock)
+    correl_arr: np.ndarray = correl.to_numpy()
+    vol_arr: np.ndarray = np.diag(std.to_numpy())
+    shrink_correl: np.ndarray = correl_arr*epo_theta+(1-epo_theta)*identity
+    candidates: dict[float, pd.Series] = {}
+    for w in epo_shrinkage_grid:
+        sigma_w: np.ndarray = vol_arr@((1-w)*shrink_correl+w*identity)@vol_arr
+        x_w: np.ndarray = np.linalg.solve(sigma_w, tsmom.to_numpy())/risk_aversion
+        candidates[w] = pd.Series(x_w, index=ticker)
+
+    # Next month's realised excess return for this date's tickers -- what
+    # holding any candidate `x_w` from `date` into the following month would
+    # actually have earned.
+    future: pd.Index = monthly_er.index[monthly_er.index > date]
+    realized: pd.Series|None = (
+        monthly_er.loc[future.min(), ticker] if len(future) else None)
+
+    return str(date), std, correl, tsmom, candidates, realized

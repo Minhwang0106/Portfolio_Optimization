@@ -215,27 +215,52 @@ risk_rolling: int = 3
 risk_n_day: int = 261
 risk_n_month: int = 12
 # Shrinkage intensity of the correlation matrix toward the identity:
-# `Sigma_hat = vol @ ((1-s)*C + s*I) @ vol`. s = 0 is plain mean-variance, s = 1
+# `Sigma_w = vol @ ((1-w)*C + w*I) @ vol`. w = 0 is plain mean-variance, w = 1
 # ignores correlations entirely.
 #
-# This is the weight on the *identity*. It used to be read as the weight on `C`,
-# so the stated 0.75 was applying a shrinkage of 0.25 -- and 0.25 is far too
-# light here. `C` is estimated on ~150 names from 261 daily observations of
-# 3-day overlapping returns and its condition number runs 7.5e3 to 4.0e4, so the
-# unshrunk inverse is mostly reading estimation noise: at s = 0 the raw solution
-# carries 350x gross exposure, at 0.25 still 16x, and its net exposure is 5% of
-# gross even on dates where 90% of the TSMOM signals are long. That is the
-# error-maximisation EPO exists to correct.
+# This is the weight on the *identity*. Chosen per formation date now, by the
+# paper's own out-of-sample procedure (Pedersen, Babu & Levine 2021, the w
+# selection algorithm): `EPO.Config`/`EPO._select_w` walks `testing_period`
+# forward and, at each date, picks the point in `epo_shrinkage_grid` whose
+# *unconstrained* closed-form weight earned the best realised Sharpe ratio over
+# every earlier formation date -- a w is never scored against the date it is
+# then applied to. `epo_shrinkage` below is therefore no longer "the"
+# shrinkage; it is only the fallback used before `epo_w_min_periods` months of
+# realised history exist to select from.
 #
-# 0.90 is the peak of a sweep of the whole backtest, not a fitted parameter --
-# long-short net-of-cost Sharpe by intensity was 0.06 (0.25), 0.17 (0.50), 0.28
-# (0.75), 0.33 (0.90), 0.19 (0.99), with annual turnover falling 10.5 -> 6.5
-# over the same range. The curve is flat between 0.75 and 0.90 and only turns
-# over once correlations are discarded outright.
+# Selection scores the unconstrained closed form even though the book actually
+# held is long-only-constrained (`EPO._long_only_weight`): the constrained
+# solve is a ~0.1s SLSQP call, and the grid search scores every candidate w
+# against every earlier date at every date, so paying that cost per candidate
+# would turn a few seconds of linear algebra into hours. This also matches the
+# paper's own algorithm, which has no long-only constraint to begin with -- so
+# selection is not solving a materially different problem, just the one the
+# paper specifies rather than the constrained variant this repo additionally
+# imposes on the weights actually held.
+#
+# `C` is estimated on ~150 names from 261 daily observations of 3-day
+# overlapping returns and its condition number runs 7.5e3 to 4.0e4, so the
+# unshrunk inverse is mostly reading estimation noise: at w = 0 the raw
+# solution carries 350x gross exposure, at w = 0.25 still 16x. That is the
+# error-maximisation EPO exists to correct, and why a grid weighted toward
+# heavier shrinkage (this one runs 0 to 1) matters more than the exact step.
 epo_shrinkage: float = 0.90
 
-# Weight on `C` in a first blend toward the identity, applied before
-# `epo_shrinkage`. At 1.0 it is the identity operation, which is what it has
+# Candidate values `EPO._select_w` scores, step 0.05 as in the paper.
+epo_shrinkage_grid: tuple[float, ...] = tuple(
+    round(float(x), 2) for x in np.arange(0.0, 1.01, 0.05))
+
+# Formation dates of realised history required before the out-of-sample
+# selection above runs; before this many, `epo_shrinkage` is used instead. The
+# paper warms up over 15 years before its first out-of-sample pick; this
+# sample spans 11 years end to end (`testing_period`), so matching that would
+# leave nothing left to test on. 24 months is a compromise: enough that the
+# grid's realised-Sharpe estimates are not pure noise, short enough to leave
+# most of the sample under actual selection rather than the fallback.
+epo_w_min_periods: int = 24
+
+# Weight on `C` in a first blend toward the identity, applied before the
+# selected w. At 1.0 it is the identity operation, which is what it has
 # always been set to; the two-stage form is kept because it is the paper's.
 epo_theta: float = 1.0
 

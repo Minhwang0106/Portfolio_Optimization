@@ -3,6 +3,12 @@
     python -m src.Empirical_Analysis.run                      # all five
     python -m src.Empirical_Analysis.run --n-workers 5
     python -m src.Empirical_Analysis.run --only epo ppp --verbose
+    python -m src.Empirical_Analysis.run --rebuild            # summary only
+
+`--rebuild` is the one to reach for after changing a metric: it replays the
+weights a finished run already wrote and recomputes everything downstream of
+them, in seconds rather than hours, without importing a single model. See
+`rebuild`.
 
 Five strategies, of which two are the same model:
 
@@ -45,6 +51,7 @@ instead seeds its optimiser's starting guess off the global numpy state, so that
 one is fixed once, inside the worker that runs it.
 """
 import argparse
+import sys
 import warnings
 import numpy as np
 import pandas as pd
@@ -201,6 +208,7 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
              common_theta: bool = True, long_only: bool = True,
              seed: int = 0, verbose: bool = False,
              sr_benchmark: str|None = 'equal_weight', n_boot: int = 4999,
+             sr_block: int|str = 5,
              result_dir: Path|None = RESULT_DIR
              )-> tuple[dict[str, BacktestResult], pd.DataFrame]:
     """Backtest every strategy on one universe and one calendar, in parallel.
@@ -210,7 +218,7 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
     the weighting rule and not in what they were allowed to hold. Each still
     screens that list its own way -- PPP for a complete characteristic record,
     `RIM_PortOp` for `constant.min_char_obs` usable quarters -- and the
-    surviving count is reported as `avg_n_holdings`.
+    surviving book's breadth is reported as `avg_weight_entropy`.
 
     Args:
         dates: Formation dates. Defaults to `constant.testing_period` (month
@@ -262,6 +270,10 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
             None reports the Sharpe ratios without testing them.
         n_boot (int): Bootstrap resamples behind `sr_diff_pval_boot`. Defaults
             to 4999. 0 leaves only the HAC p-value, which is the liberal one.
+        sr_block (int | str): Block length for that bootstrap, or `'calibrate'`
+            to run the paper's Algorithm 3.1 per strategy. Defaults to 5; the
+            calibration is cheap but does not identify a block size on these
+            series, so it is not the default. See `sharpe_inference`.
         verbose (bool): Print each formation date as it is reached. Interleaved
             across workers when `n_workers > 1`, so the lines arrive out of
             order; the label on each says which strategy it belongs to.
@@ -341,7 +353,7 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
     # that drops it gets a warning rather than a silently untested table.
     table: pd.DataFrame = summarise(results, rf, net=True, gamma=risk_aversion,
                                     benchmark=sr_benchmark, n_boot=n_boot,
-                                    seed=seed)
+                                    block_size=sr_block, seed=seed)
 
     if result_dir is not None:
         save(results, table, rf, result_dir)
@@ -405,10 +417,124 @@ def save (results: dict[str, BacktestResult], table: pd.DataFrame,
     return result_dir
 
 
+def rebuild (result_dir: Path = RESULT_DIR, dates=testing_period,
+             cost_bps: float = backtest_cost_bps,
+             sr_benchmark: str|None = 'equal_weight', n_boot: int = 4999,
+             sr_block: int|str = 5, seed: int = 0, verify: bool = True
+             )-> tuple[dict[str, BacktestResult], pd.DataFrame]:
+    """Redo the summary from a finished run's saved weights, without the models.
+
+    Changing a metric should not cost another backtest. The expensive half of a
+    run is the weighting rules, and their output is already in
+    `weights_<strategy>.csv`, so this replays those weights through the same
+    `engine.backtest` -- same drift, same turnover, same costs -- and
+    re-summarises. `RIM_PortOp`, `EPO` and `PPP` are never imported.
+
+    That replay is the reason this is not simply re-reading `summary.csv`: any
+    statistic of the *held* book, `entropy` among them, is a per-month quantity
+    that the saved aggregates cannot reconstruct. Replaying regenerates the
+    per-month diagnostics too.
+
+    Args:
+        result_dir (Path): A directory `save` has written. Defaults to
+            `constant.RESULT_DIR`.
+        dates: Formation dates, which must be the ones the run used. Defaults to
+            `constant.testing_period`.
+        cost_bps (float): Transaction cost, likewise. Defaults to
+            `constant.backtest_cost_bps`.
+        sr_benchmark (str | None): As `run_all`.
+        n_boot (int): As `run_all`.
+        sr_block (int | str): As `run_all`.
+        seed (int): As `run_all`.
+        verify (bool): Check the replayed net returns against the saved
+            `monthly_returns.csv` and raise if they differ. Defaults to True.
+            Set it False to replay under a *different* `cost_bps`, which is the
+            one case where the returns are meant to move.
+
+    Returns:
+        tuple[dict[str, BacktestResult], pd.DataFrame]: As `run_all`, and
+            written to `result_dir` the same way.
+
+    Raises:
+        FileNotFoundError: If no `weights_*.csv` is there to replay.
+        ValueError: If `verify` and the replay does not reproduce the saved
+            returns -- which means `dates` or `cost_bps` is not what the run
+            used, and every number downstream would be quietly wrong.
+
+    Example:
+        >>> _, table = rebuild()
+        >>> table.loc['sharpe']
+        equal_weight    0.6322
+        ...
+    """
+    saved: Path = result_dir/'monthly_returns.csv'
+    files: dict[str, Path] = {p.stem.removeprefix('weights_'): p
+                              for p in sorted(result_dir.glob('weights_*.csv'))}
+    if not files:
+        raise FileNotFoundError(f'no weights_*.csv in {result_dir}; '
+                                'there is no run here to rebuild from')
+    # `STRATEGIES` order where they are known, so the table's columns do not
+    # reorder just because the directory listing did.
+    labels: list[str] = ([s for s in STRATEGIES if s in files]
+                         +[s for s in files if s not in STRATEGIES])
+
+    # Failures cannot be rediscovered -- a lookup rule never raises -- so they
+    # are carried across from the run that did fail.
+    failed: dict[str, dict[pd.Timestamp, str]] = {}
+    if (result_dir/'failures.csv').exists():
+        for _, row in pd.read_csv(result_dir/'failures.csv').iterrows():
+            failed.setdefault(str(row['strategy']), {})[
+                pd.Timestamp(row['date'])] = str(row['error'])
+
+    return_df: pd.DataFrame = monthly_return()
+    uni: dict[pd.Timestamp, list[str]] = universe()
+    formation: list[pd.Timestamp] = [pd.Timestamp(d) for d in dates]
+    prior: pd.DataFrame|None = (pd.read_csv(saved, index_col=0,
+                                            parse_dates=True)
+                                if saved.exists() else None)
+
+    results: dict[str, BacktestResult] = {}
+    for label in labels:
+        weights: pd.DataFrame = pd.read_csv(files[label], index_col=0,
+                                            parse_dates=True)
+
+        def rule (date: pd.Timestamp, tickers: list[str],
+                  _w: pd.DataFrame = weights)-> pd.Series:
+            row: pd.Series = _w.loc[date].dropna()
+            return row[row.index.intersection(tickers)]
+
+        res: BacktestResult = backtest(
+            rule, formation, return_df, uni, rebalance=list(weights.index),
+            cost_bps=cost_bps, name=label)
+        res.failures.update(failed.get(label, {}))
+
+        if verify and prior is not None and f'{label}_net' in prior:
+            gap: float = float((res.net_returns
+                                -prior[f'{label}_net'].dropna()).abs().max())
+            if gap > 1e-10:
+                raise ValueError(
+                    f'{label}: replay does not reproduce the saved run '
+                    f'(max return gap {gap:.2e}). `dates` or `cost_bps` is not '
+                    f'what produced {saved.name}; pass verify=False only if '
+                    f'the returns are meant to change.')
+        results[label] = res
+
+    rf: pd.Series = risk_free()
+    table: pd.DataFrame = summarise(results, rf, net=True, gamma=risk_aversion,
+                                    benchmark=sr_benchmark, n_boot=n_boot,
+                                    block_size=sr_block, seed=seed)
+    save(results, table, rf, result_dir)
+    return results, table
+
+
 def _cli ()-> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='Backtest the proposed model (historical and forward), '
                     'EPO and PPP on one universe.')
+    parser.add_argument('--rebuild', action='store_true',
+                        help='recompute the summary from the saved weights in '
+                             '--out, without running any model. Use after '
+                             'changing a metric.')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--only', nargs='+', choices=STRATEGIES,
                        help='run just these strategies')
@@ -436,14 +562,46 @@ def _cli ()-> argparse.Namespace:
                              'tested against; "none" skips the test')
     parser.add_argument('--n-boot', type=int, default=4999,
                         help='bootstrap resamples for the Sharpe ratio test')
+    parser.add_argument('--sr-block', default='5',
+                        help='block length for that bootstrap, or "calibrate" '
+                             'to run Algorithm 3.1 (default 5)')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--out', type=Path, default=RESULT_DIR)
     return parser.parse_args()
 
 
+def _say (message: str)-> None:
+    """Print a message that may contain a path this console cannot encode.
+
+    Windows hands a bare `python` a cp1252 stdout, and this repository lives
+    under a path with Vietnamese diacritics -- so printing the output directory
+    raises `UnicodeEncodeError` *after* every file has been written, turning a
+    finished run into a traceback. Replacing the unencodable characters is the
+    right trade: the point of the line is to confirm the write happened.
+    """
+    encoding: str = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+    print(message.encode(encoding, errors='replace').decode(encoding))
+
+
 if __name__ == '__main__':
     args = _cli()
+    sr_block_arg = ('calibrate' if args.sr_block == 'calibrate'
+                    else int(args.sr_block))
+    sr_benchmark_arg = (None if args.sr_benchmark == 'none'
+                        else args.sr_benchmark)
+    if args.rebuild:
+        _, summary_table = rebuild(
+            result_dir=args.out, cost_bps=args.cost_bps,
+            sr_benchmark=sr_benchmark_arg, n_boot=args.n_boot,
+            sr_block=sr_block_arg, seed=args.seed)
+        with pd.option_context('display.width', 160,
+                               'display.float_format', '{:,.4f}'.format):
+            print()
+            print(summary_table)
+        _say(f'\nrebuilt from saved weights in {args.out}')
+        raise SystemExit(0)
+
     _, summary_table = run_all(
         only=tuple(args.only) if args.only else None,
         skip=tuple(args.skip), n_workers=args.n_workers,
@@ -451,10 +609,10 @@ if __name__ == '__main__':
         epo_workers=args.epo_workers, n_samples=args.n_samples,
         proposed_quarterly=not args.monthly_proposed,
         long_only=not args.long_short, seed=args.seed, verbose=args.verbose,
-        sr_benchmark=None if args.sr_benchmark == 'none' else args.sr_benchmark,
-        n_boot=args.n_boot, result_dir=args.out)
+        sr_benchmark=sr_benchmark_arg, n_boot=args.n_boot,
+        sr_block=sr_block_arg, result_dir=args.out)
     with pd.option_context('display.width', 160,
                            'display.float_format', '{:,.4f}'.format):
         print()
         print(summary_table)
-    print(f'\nwritten to {args.out}')
+    _say(f'\nwritten to {args.out}')

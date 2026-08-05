@@ -10,6 +10,24 @@ python -m src.Empirical_Analysis.run --n-workers 5
 Writes to `constant.RESULT_DIR` (`Result/`). Add `--only equal_weight epo ppp`
 to skip the slow ones while iterating.
 
+**Changed a metric? Don't rerun the backtest.**
+
+```
+python -m src.Empirical_Analysis.run --rebuild
+```
+
+`--rebuild` (or `run.rebuild()`) replays the weights the last run already wrote
+back through the same engine — same drift, same turnover, same costs — and
+recomputes everything downstream. Seconds instead of hours, and it imports no
+model at all. It replays rather than re-reading `summary.csv` because any
+statistic of the *held* book, `avg_weight_entropy` among them, is a per-month
+quantity the saved aggregates cannot reconstruct.
+
+It verifies the replayed returns against the saved `monthly_returns.csv` and
+raises if they differ, so a `--cost-bps` or date range that does not match the
+original run fails loudly instead of quietly producing a table of wrong
+numbers. Pass `verify=False` when a change to the returns is the point.
+
 ## Strategies
 
 | label | model | rebalance | weights |
@@ -44,7 +62,7 @@ measures the harness:
 
 - **Universe.** All five get `Data.exclusion.applicable_ticker`'s list at each
   date, spelled out below. Each model then screens it further its own way, which
-  is a property of the model and is reported as `avg_n_holdings`, not equalised
+  is a property of the model and shows up in `avg_weight_entropy`, not equalised
   away.
 - **No lookahead.** A weight formed at month end `t` earns the month ending at
   `t+1`. Each model applies its own publication lag upstream; the engine's job
@@ -202,15 +220,36 @@ implemented, deliberately: it assumes i.i.d. bivariate normal returns, and the
 paper's whole point is that this fails exactly where it matters. Its rejection
 rate reaches 22.5% for a nominal 10% test on t₆-VAR data.
 
-Two implementation choices are documented at the top of `sharpe_inference.py`
-and worth knowing before quoting a number: the bootstrap covariance is scaled
-by `1/l` rather than the `1/T` printed in the paper's Section 3.2.2 (they agree
-only at block size 1, which is the case its footnote checks), and the block size
-defaults to a fixed 5 rather than to the calibration of the paper's Algorithm
-3.1. That calibration is implemented — `sharpe_inference.calibrate_block_size` —
-but costs `K × |grid| × M` resamples, so it is not paid on every run. 5 sits
-between the `b = 4` and `b = 6` the paper's own two applications calibrated to
-at a comparable sample size.
+One implementation choice is worth knowing before quoting a number: the
+bootstrap covariance is scaled by `1/l` rather than the `1/T` printed in the
+paper's Section 3.2.2. The two agree only at block size 1, which is the case its
+footnote 9 checks; `1/T` is short by a factor of `b` everywhere else. See the
+top of `sharpe_inference.py`.
+
+### Why the block size is fixed at 5 rather than calibrated
+
+Algorithm 3.1 is implemented (`sharpe_inference.calibrate_block_size`, or
+`--sr-block calibrate`) and it is cheap — about 4s at `K = 100`, 40s at the
+`K = 1000` the paper asks for, against a backtest that takes ten hours. Cost is
+not the reason it is off by default.
+
+The reason is that **it does not identify a block size on these series.** At
+`K = 1000` the estimated coverage over the paper's own grid `{1, 2, 4, 6, 8, 10}`
+spans 0.932 to 0.939 — a spread of 0.007 — while each point carries a Monte
+Carlo standard error of `√(0.94·0.06/1000)` ≈ 0.0075. The differences between
+block sizes are smaller than the error in measuring them, so a plain argmin
+returns a different answer on every seed (4, 1, 2, 1 over four of them).
+`calibrate_block_size` therefore treats every candidate within one standard
+error of the best as tied and takes the middle of that set, which keeps the pick
+off the endpoints; the fixed default of 5 lands in the same region, and is close
+to the `b = 4` and `b = 6` the paper's two applications calibrated to at a
+comparable `T`.
+
+It makes little difference either way: across the whole grid the p-values here
+move by less than 0.02. The one case worth naming is `proposed_forward`, which
+goes from 0.111 at `b = 5` to 0.098 at `b = 1` — i.e. it straddles 10%, which is
+a reason to distrust that threshold on this data rather than to prefer a block
+size.
 
 `--sr-benchmark none` skips the test; `--n-boot 0` leaves only the HAC p-value.
 
@@ -227,6 +266,43 @@ at a comparable sample size.
   are actually fitted on.
 - `run.py` — configures each model inside its own worker process and fans the
   strategies out over a pool.
+
+## What the table reports
+
+Eight rows, `metrics.SUMMARY_ROWS`:
+
+| row | note |
+|---|---|
+| `ann_return` | geometric, after cost |
+| `ann_vol` | |
+| `max_drawdown` | |
+| `sharpe` | annualised, on excess returns |
+| `sharpe_pval` | bootstrap p-value against `equal_weight` — see above |
+| `ann_crra_ce` | at `constant.risk_aversion`, the objective two of the models fit |
+| `ann_turnover` | |
+| `avg_weight_entropy` | breadth, in nats |
+
+That is the whole table, and the whole computation — Sortino, Calmar, hit rate,
+skew, kurtosis, best and worst month, the exposure averages and the holding
+counts are gone, not hidden. Nothing is lost that a run cannot show another
+way: the per-month series they summarised are still in each result's
+`diagnostics` (and in `diagnostics_<strategy>.csv`), and formation dates whose
+rule raised are still in `failures` and in `failures.csv`.
+
+**Entropy is the breadth measure.** `-Σ p ln p` on `p = |w| / gross`, averaged
+over months. An equal-weighted book of N names scores `ln N`, so `exp(entropy)`
+reads as a name count: 5.63 for `equal_weight` is ~279 names, 4.34 for `epo` is
+~77. It replaces `avg_n_holdings`, `avg_effective_n` and `avg_max_weight`, which
+were three answers to one question — and unlike the inverse Herfindahl, which is
+driven by the largest positions, entropy also notices whether the rest of the
+capital is spread or itself clustered. Taken on absolute weights over gross so
+it stays defined under `--long-short`, where a signed weight is not a
+probability; it then measures where risk is spread, not net position.
+
+`n_failed_date` is no longer reported. It is a correctness caveat rather than a
+metric — currently 0 for every strategy — so after any run whose universe or
+data changed, check for `failures.csv`, which `run.save` writes only when a
+formation date's weighting rule raised.
 
 ## Output
 

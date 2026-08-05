@@ -19,6 +19,7 @@ import pytest
 
 from src.Empirical_Analysis.engine import backtest, quarter_ends
 from src.Empirical_Analysis.metrics import (
+    SUMMARY_ROWS,
     crra_certainty_equivalent,
     max_drawdown,
     performance,
@@ -278,6 +279,32 @@ def test_effective_n_is_the_name_count_for_an_equal_weighted_book(dates, returns
     assert res.diagnostics['effective_n'].iloc[0] == pytest.approx(len(TICKERS))
 
 
+def test_entropy_of_an_equal_weighted_book_is_log_of_the_name_count(
+        dates, returns, uni):
+    res = backtest(equal_weight, dates, returns, uni)
+    assert res.diagnostics['entropy'].iloc[0] == pytest.approx(
+        np.log(len(TICKERS)))
+
+
+def test_entropy_of_a_single_name_book_is_zero(dates, returns, uni):
+    """The concentration `avg_n_holdings` misses: one name, one number."""
+    res = backtest(lambda date, tickers: pd.Series({tickers[0]: 1.0}),
+                   dates, returns, uni)
+    assert res.diagnostics['entropy'].iloc[0] == pytest.approx(0.0)
+
+
+def test_entropy_is_taken_on_gross_so_a_long_short_book_still_has_one(
+        dates, returns, uni):
+    """A signed weight is not a probability; `|w|/gross` is."""
+    def half_short(date, tickers):
+        w = pd.Series(0.5, index=tickers[:2])
+        w.iloc[1] = -0.5
+        return w
+    res = backtest(half_short, dates, returns, uni)
+    # Two names at equal gross weight, whatever their signs.
+    assert res.diagnostics['entropy'].iloc[0] == pytest.approx(np.log(2))
+
+
 # --------------------------------------------------------------------------
 # metrics
 # --------------------------------------------------------------------------
@@ -342,9 +369,9 @@ def test_summarise_reports_one_column_per_strategy(dates, returns, uni):
     # test has its own file.
     table = summarise({'ew': res}, rf=None, benchmark=None)
     assert list(table.columns) == ['ew']
-    for row in ('ann_return', 'sharpe', 'ann_crra_ce', 'ann_turnover',
-                'n_failed_date'):
-        assert row in table.index
+    # The table is exactly `SUMMARY_ROWS`, less the p-value there is no
+    # benchmark to compute -- nothing else is carried along.
+    assert list(table.index) == [r for r in SUMMARY_ROWS if r != 'sharpe_pval']
 
 
 def test_annualised_turnover_counts_trades_not_months(dates, returns, uni):

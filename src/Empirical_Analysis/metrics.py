@@ -36,6 +36,17 @@ from .sharpe_inference import sharpe_difference_test
 
 MONTHS_PER_YEAR: int = 12
 
+# Everything the comparison table reports, in order -- and everything it
+# computes: a table read side by side is worse for every row that is not being
+# compared on. `sharpe_pval` is the bootstrap p-value on `sharpe` against the
+# benchmark. `avg_weight_entropy` is the one breadth figure, in place of the
+# three (`avg_n_holdings`, `avg_effective_n`, `avg_max_weight`) that were
+# answering the same question. The per-month series behind these is untouched
+# in `BacktestResult.diagnostics` for anything a summary row cannot show.
+SUMMARY_ROWS: tuple[str, ...] = (
+    'ann_return', 'ann_vol', 'max_drawdown', 'sharpe', 'sharpe_pval',
+    'ann_crra_ce', 'ann_turnover', 'avg_weight_entropy')
+
 
 def _annualise_geometric (returns: pd.Series)-> float:
     """Compound annual growth rate. NaN if the series ever wipes out.
@@ -162,12 +173,8 @@ def performance (returns: pd.Series, rf: pd.Series|None = None,
             Defaults to `constant.risk_aversion`.
 
     Returns:
-        pd.Series: Named after `returns`, with entries
-
-            * `n_month`, `ann_return`, `ann_vol`, `sharpe`, `sortino`
-            * `max_drawdown`, `calmar`
-            * `hit_rate`, `skew`, `excess_kurtosis`
-            * `ann_crra_ce`, `worst_month`, `best_month`
+        pd.Series: Named after `returns`, with `ann_return`, `ann_vol`,
+            `max_drawdown`, `sharpe` and `ann_crra_ce`.
 
     Raises:
         ValueError: If `returns` is empty.
@@ -184,38 +191,19 @@ def performance (returns: pd.Series, rf: pd.Series|None = None,
     excess: pd.Series = excess_return(returns, rf, net_exposure)
 
     ann_vol: float = float(returns.std(ddof=1))*np.sqrt(MONTHS_PER_YEAR)
-    ann_return: float = _annualise_geometric(returns)
     # On excess returns, and annualised by the same root the vol was, so the
     # ratio is the arithmetic mean over the standard deviation rather than a
     # geometric mean over one -- mixing the two is the usual way this number
     # ends up flattering a high-vol strategy.
     sharpe: float = (float(excess.mean())*MONTHS_PER_YEAR/ann_vol
                      if ann_vol > 0 else float('nan'))
-    # Target semideviation: the squared shortfalls are averaged over *every*
-    # month, not only the losing ones. Averaging over the losers alone is a
-    # common variant and it makes the Sortino ratio smaller than the Sharpe
-    # ratio for almost any series, which defeats the point of quoting both.
-    shortfall: pd.Series = excess.clip(upper=0.0)
-    down_vol: float = float(np.sqrt((shortfall**2).mean()))*np.sqrt(
-        MONTHS_PER_YEAR)
-    sortino: float = (float(excess.mean())*MONTHS_PER_YEAR/down_vol
-                      if down_vol > 0 else float('nan'))
-    mdd: float = max_drawdown(returns)
 
     return pd.Series({
-        'n_month': float(len(returns)),
-        'ann_return': ann_return,
+        'ann_return': _annualise_geometric(returns),
         'ann_vol': ann_vol,
+        'max_drawdown': max_drawdown(returns),
         'sharpe': sharpe,
-        'sortino': sortino,
-        'max_drawdown': mdd,
-        'calmar': ann_return/mdd if mdd and mdd > 0 else float('nan'),
-        'hit_rate': float((returns > 0).mean()),
-        'skew': float(returns.skew()),
-        'excess_kurtosis': float(returns.kurtosis()),
         'ann_crra_ce': crra_certainty_equivalent(returns, gamma),
-        'worst_month': float(returns.min()),
-        'best_month': float(returns.max()),
     }, name=returns.name)
 
 
@@ -223,7 +211,7 @@ def summarise (results: dict[str, BacktestResult]|list[BacktestResult],
                rf: pd.Series|None = None, net: bool = True,
                gamma: float = risk_aversion,
                benchmark: str|None = 'equal_weight',
-               block_size: int = 5, n_boot: int = 4999,
+               block_size: int|str = 5, n_boot: int = 4999,
                seed: int = 0)-> pd.DataFrame:
     """Stack `performance` across strategies, plus diagnostics and the SR test.
 
@@ -244,20 +232,20 @@ def summarise (results: dict[str, BacktestResult]|list[BacktestResult],
             the usual cause is `--only` having dropped it rather than a
             deliberate choice. The benchmark's own column is NaN in those rows,
             not zero: it has no difference from itself to test.
-        block_size (int): Block length for the bootstrap. Defaults to 5; see
-            `sharpe_inference.calibrate_block_size` to pick it from the data.
+        block_size (int | str): Block length for the bootstrap. Defaults to 5.
+            `'calibrate'` runs the paper's Algorithm 3.1 per column instead --
+            see `sharpe_inference.calibrate_block_size`, and its docstring on
+            why that is offered rather than assumed.
         n_boot (int): Bootstrap resamples. Defaults to 4999. 0 leaves only the
             HAC p-value, which is the fast way to iterate.
         seed (int): Seeds the bootstrap so the p-values reproduce. Defaults to 0.
 
     Returns:
-        pd.DataFrame: One column per strategy, statistics down the rows.
-            `performance`'s rows, then `ann_turnover`, `avg_gross_exposure`,
-            `avg_net_exposure`, `avg_n_holdings` and `n_failed_date` -- the last
-            being formation dates whose weighting rule raised, which is a caveat
-            on the column above it rather than a performance figure. Then, when
-            a benchmark is tested, `sr_diff` and `sr_diff_se` (annualised) and
-            the two p-values `sr_diff_pval_hac` and `sr_diff_pval_boot`.
+        pd.DataFrame: One column per strategy, `SUMMARY_ROWS` down the rows --
+            less `sharpe_pval` when there is no benchmark to test against.
+            Per-month detail that no longer has a row here (exposures, holding
+            counts, unpriced weight) is still in each result's `diagnostics`,
+            and dates whose rule raised are still in its `failures`.
 
     Example:
         >>> summarise({'EPO': epo_res, 'PPP': ppp_res}, risk_free()).loc['sharpe']
@@ -290,35 +278,33 @@ def summarise (results: dict[str, BacktestResult]|list[BacktestResult],
             # trade rather than a third as often.
             'ann_turnover': float(diag['turnover'].sum())*MONTHS_PER_YEAR
                             /len(diag),
-            'avg_gross_exposure': float(diag['gross_exposure'].mean()),
-            'avg_net_exposure': float(diag['net_exposure'].mean()),
-            'avg_n_holdings': float(diag['n_holdings'].mean()),
-            # The breadth figure worth reading. `avg_n_holdings` counts every
-            # name the optimiser left off exact zero, which for a bounded SLSQP
-            # solve is most of the universe however concentrated the book is.
-            'avg_effective_n': float(diag['effective_n'].mean()),
-            'avg_max_weight': float(diag['max_weight'].mean()),
-            'avg_unpriced_weight': float(diag['unpriced_weight'].mean()),
-            'n_failed_date': float(len(res.failures)),
+            # The breadth figure. A holding count would say most of the universe
+            # however concentrated the book is, because a bounded SLSQP solve
+            # leaves almost nothing at exactly zero; entropy reads the sizes.
+            'avg_weight_entropy': float(diag['entropy'].mean()),
         })])
 
         if benchmark is not None:
             stats = pd.concat([stats, _sharpe_test_rows(
                 label, excess, benchmark, block_size, n_boot, seed)])
         columns[label] = stats
-    return pd.DataFrame(columns)
+
+    table: pd.DataFrame = pd.DataFrame(columns)
+    # `sharpe` next to the p-value that tests it, rather than at the end where
+    # the two would be read apart.
+    order: list[str] = [r for r in SUMMARY_ROWS if r in table.index]
+    return table.loc[order]
 
 
 def _sharpe_test_rows (label: str, excess: dict[str, pd.Series], benchmark: str,
-                       block_size: int, n_boot: int, seed: int)-> pd.Series:
+                       block_size: int|str, n_boot: int, seed: int)-> pd.Series:
     """One strategy's Ledoit-Wolf rows, or NaNs where there is nothing to test.
 
     Every strategy gets the same `seed`, so the resampling is common across
     columns. That is deliberate: the p-values are then differences in the data
     rather than differences in which months each column happened to draw.
     """
-    rows: list[str] = ['sr_diff', 'sr_diff_se', 'sr_diff_pval_hac',
-                       'sr_diff_pval_boot']
+    rows: list[str] = ['sharpe_pval']
     if label == benchmark:
         return pd.Series(float('nan'), index=rows)
     try:
@@ -331,10 +317,12 @@ def _sharpe_test_rows (label: str, excess: dict[str, pd.Series], benchmark: str,
         warnings.warn(f'{label}: Sharpe difference test skipped ({exc})',
                       RuntimeWarning)
         return pd.Series(float('nan'), index=rows)
-    return pd.Series({'sr_diff': test['sr_diff'],
-                      'sr_diff_se': test['sr_diff_se'],
-                      'sr_diff_pval_hac': test['pval_hac'],
-                      'sr_diff_pval_boot': test['pval_boot']})
+    # The bootstrap p-value, not the HAC one -- `sharpe_inference` computes both
+    # (the studentizing needs the HAC standard error either way) but only this
+    # one holds its nominal level at this sample size. Call
+    # `sharpe_difference_test` directly for the difference and its standard
+    # error; here they would be two more rows saying what `sharpe` already says.
+    return pd.Series({'sharpe_pval': test['pval_boot']})
 
 
 def cumulative_wealth (results: dict[str, BacktestResult]|list[BacktestResult],

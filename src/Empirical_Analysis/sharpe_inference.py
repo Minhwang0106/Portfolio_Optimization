@@ -57,11 +57,20 @@ stated because the results move if you disagree:
   `1/b` of it. The two agree at `b=1`, which is the only case the paper's
   footnote 9 checks. `test_sharpe_inference.py` pins this by simulation.
 * **The block size defaults to a fixed 5, not to the calibration of Algorithm
-  3.1.** The algorithm is implemented, in `calibrate_block_size`, but it costs
-  `K * len(grid) * n_boot` resamples and is not something to pay on every
-  backtest. 5 sits between the `b=4` and `b=6` the paper's own two applications
-  calibrated to at a comparable `T`; call `calibrate_block_size` when the
-  p-value is near a threshold you care about.
+  3.1.** Not on cost -- the calibration is implemented in
+  `calibrate_block_size`, runs in about 4s at `K=100` and 40s at the `K=1000`
+  the paper asks for, and is available here as `block_size='calibrate'`. The
+  reason is that on this backtest's series it does not identify anything. Its
+  coverage curve over the paper's own grid spans 0.932 to 0.939 at `K=1000`,
+  a range of 0.007, while each point carries a Monte Carlo standard error of
+  about `sqrt(0.94*0.06/1000) = 0.0075`. The differences between block sizes
+  are smaller than the noise in measuring them, so a plain argmin returns a
+  different answer per seed -- 4, 1, 2, 1 over four of them. `calibrate_block_size`
+  therefore treats everything within one standard error of the best as tied and
+  takes the middle, which is stable, and the fixed default of 5 sits in the same
+  place. It is also close to the `b=4` and `b=6` the paper's two applications
+  calibrated to at a comparable `T`. None of this matters much for the answer:
+  across the whole grid the p-values here move by less than 0.02.
 """
 import math
 import warnings
@@ -294,9 +303,10 @@ def _bootstrap_pvalue (x: np.ndarray, b: np.ndarray, delta: float,
 
 
 def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
-                            block_size: int = 5, n_boot: int = 4999,
+                            block_size: int|str = 5, n_boot: int = 4999,
                             prewhite: bool = True, seed: int = 0,
-                            periods_per_year: int = 12)-> pd.Series:
+                            periods_per_year: int = 12,
+                            n_pseudo: int = 1000)-> pd.Series:
     """Test that two Sharpe ratios are equal, robustly. Ledoit-Wolf (2008).
 
     Both p-values test `H0: SR_x - SR_b = 0` two-sided. Read `pval_boot`; see the
@@ -306,8 +316,11 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
         excess_x (pd.Series): The strategy's excess returns, already net of the
             risk-free rate. Aligned against `excess_b` on the shared index.
         excess_b (pd.Series): The benchmark's excess returns.
-        block_size (int): Circular block length for the bootstrap. Defaults to 5;
-            `calibrate_block_size` picks it from the data instead.
+        block_size (int | str): Circular block length for the bootstrap.
+            Defaults to 5. `'calibrate'` runs Algorithm 3.1 first and uses what
+            it picks, adding a `block_size` entry to the result; on series whose
+            coverage curve is flat that is a slower route to the same p-value,
+            so it is offered rather than assumed. See `calibrate_block_size`.
         n_boot (int): Bootstrap resamples, the paper's `M`. Defaults to 4999, as
             in its own applications. 0 skips the bootstrap and returns NaN for
             `pval_boot`, leaving only HAC.
@@ -316,11 +329,13 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
             Defaults to 0.
         periods_per_year (int): Scales `sr_diff` and `sr_diff_se` to annual by
             `sqrt`. The p-values are invariant to it. Defaults to 12.
+        n_pseudo (int): Pseudo sequences when `block_size='calibrate'`, ignored
+            otherwise. Defaults to 1000, the paper's floor for real data.
 
     Returns:
         pd.Series: `sr_diff` (annualised `SR_x - SR_b`), `sr_diff_se` (its
             annualised HAC standard error), `pval_hac`, `pval_boot`, and
-            `n_month` used.
+            `n_month` used. Plus `block_size` when it was calibrated.
 
     Raises:
         ValueError: If fewer than `_N_MOMENT+2` months overlap, or if either
@@ -354,6 +369,14 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
     pval_hac: float = (math.erfc(abs(delta)/se_hac/math.sqrt(2))
                        if se_hac > 0 else float('nan'))
 
+    calibrated: bool = isinstance(block_size, str)
+    if calibrated:
+        if block_size != 'calibrate':
+            raise ValueError(f'block_size must be an int or "calibrate"; '
+                             f'got {block_size!r}')
+        block_size, _ = calibrate_block_size(excess_x, excess_b,
+                                             n_pseudo=n_pseudo, seed=seed)
+
     pval_boot: float = float('nan')
     if n_boot > 0:
         if block_size < 1 or block_size > n_obs:
@@ -363,9 +386,13 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
                                       np.random.default_rng(seed))
 
     scale: float = math.sqrt(periods_per_year)
-    return pd.Series({'sr_diff': delta*scale, 'sr_diff_se': se_hac*scale,
-                      'pval_hac': pval_hac, 'pval_boot': pval_boot,
-                      'n_month': float(n_obs)})
+    out: pd.Series = pd.Series(
+        {'sr_diff': delta*scale, 'sr_diff_se': se_hac*scale,
+         'pval_hac': pval_hac, 'pval_boot': pval_boot,
+         'n_month': float(n_obs)})
+    if calibrated:
+        out['block_size'] = float(block_size)
+    return out
 
 
 def _var1_pseudo (x: np.ndarray, b: np.ndarray, n_seq: int,
@@ -481,8 +508,21 @@ def calibrate_block_size (excess_x: pd.Series, excess_b: pd.Series,
 
     result: pd.Series = pd.Series(coverage, name='coverage')
     result.index.name = 'block_size'
-    if result.isna().all():
+    if result.empty or result.isna().all():
         warnings.warn('block size calibration produced no usable coverage; '
                       'falling back to 5', RuntimeWarning)
         return 5, result
-    return int((result-(1-alpha)).abs().idxmin()), result
+
+    # A plain argmin over `|g(b) - (1-alpha)|` is not stable here: each g(b) is
+    # a proportion out of `n_pseudo`, so it carries a standard error of about
+    # sqrt(g(1-g)/K), and on this data the whole curve is flatter than that. The
+    # argmin would then be resampling noise, and the block size -- hence the
+    # p-value -- would move with the calibration seed. So every candidate within
+    # one standard error of the best is treated as tied, and the middle of that
+    # set is taken: the extremes are the two failure modes, b too small missing
+    # the dependence and b too large leaving too few blocks to average over.
+    distance: pd.Series = (result-(1-alpha)).abs()
+    best: float = float(distance.min())
+    mc_se: float = math.sqrt(max((1-alpha)*alpha/max(n_pseudo, 1), 0.0))
+    tied: pd.Index = distance[distance <= best+mc_se].index
+    return int(tied[len(tied)//2]), result

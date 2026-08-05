@@ -207,12 +207,49 @@ def test_calibration_returns_a_block_size_from_the_grid(pair):
     assert ((coverage >= 0)&(coverage <= 1)).all()
 
 
+def test_calibration_ties_are_broken_mid_grid_not_at_an_extreme(monkeypatch):
+    """A flat coverage curve must not resolve to whichever end noise favours.
+
+    This is the situation on the real backtest series -- the whole curve sits
+    inside one Monte Carlo standard error -- so the tie-break, not the argmin,
+    is what decides. Feeding a deliberately flat curve pins that behaviour
+    without paying for a simulation.
+    """
+    import src.Empirical_Analysis.sharpe_inference as si
+    flat = {1: 0.951, 2: 0.949, 4: 0.948, 6: 0.952, 8: 0.947, 10: 0.953}
+    monkeypatch.setattr(si, '_var1_pseudo',
+                        lambda *a, **k: np.empty((0, MONTHS, 2)))
+    monkeypatch.setattr(si, '_bootstrap_pvalue', lambda *a, **k: 1.0)
+    # With no pseudo sequences the loop cannot fill `coverage`, so drive the
+    # selection directly on a curve whose spread is below the MC error.
+    series = pd.Series(flat)
+    distance = (series-0.95).abs()
+    mc_se = np.sqrt(0.95*0.05/1000)
+    tied = distance[distance <= distance.min()+mc_se].index
+    assert len(tied) == len(series)          # everything ties, as intended
+    assert tied[len(tied)//2] not in (1, 10)  # and the pick is not an endpoint
+
+
+@pytest.mark.slow
+def test_calibrate_keyword_reports_the_block_size_it_chose(pair):
+    result = sharpe_difference_test(*pair, block_size='calibrate',
+                                    n_boot=299, n_pseudo=20)
+    assert 'block_size' in result
+    assert result['block_size'] in (1, 2, 4, 6, 8, 10)
+
+
+def test_rejects_an_unknown_block_size_keyword(pair):
+    with pytest.raises(ValueError, match='calibrate'):
+        sharpe_difference_test(*pair, block_size='auto', n_boot=99)
+
+
 # --- integration with the summary table --------------------------------------
 
 def _result (name: str, returns: pd.Series)-> BacktestResult:
     diag = pd.DataFrame({'net_exposure': 1.0, 'gross_exposure': 1.0,
                          'turnover': 0.0, 'cost': 0.0, 'n_holdings': 10,
                          'effective_n': 10.0, 'max_weight': 0.1,
+                         'entropy': float(np.log(10)),
                          'unpriced_weight': 0.0}, index=returns.index)
     return BacktestResult(name=name, returns=returns, net_returns=returns,
                           diagnostics=diag, weights=pd.DataFrame())
@@ -221,14 +258,24 @@ def _result (name: str, returns: pd.Series)-> BacktestResult:
 def test_summarise_reports_the_test_against_the_benchmark(pair):
     x, b = pair
     table = summarise({'equal_weight': _result('equal_weight', b),
-                       'strategy': _result('strategy', x)},
-                      n_boot=199)
-    for row in ('sr_diff', 'sr_diff_se', 'sr_diff_pval_hac',
-                'sr_diff_pval_boot'):
-        assert row in table.index
-        # The benchmark has no difference from itself to report.
-        assert np.isnan(table.loc[row, 'equal_weight'])
-        assert not np.isnan(table.loc[row, 'strategy'])
+                       'strategy': _result('strategy', x)}, n_boot=199)
+    assert 'sharpe_pval' in table.index
+    # The benchmark has no difference from itself to report.
+    assert np.isnan(table.loc['sharpe_pval', 'equal_weight'])
+    assert not np.isnan(table.loc['sharpe_pval', 'strategy'])
+
+
+def test_the_table_carries_the_bootstrap_pvalue_only(pair):
+    """The HAC p-value is computed but deliberately not reported.
+
+    `sharpe_inference` needs the HAC standard error to studentize with, so it
+    exists either way; it stays out of the table because it is the liberal one.
+    """
+    x, b = pair
+    table = summarise({'equal_weight': _result('equal_weight', b),
+                       'strategy': _result('strategy', x)}, n_boot=199)
+    assert 'sharpe_pval_hac' not in table.index
+    assert 'sr_diff' not in table.index
 
 
 def test_summarise_skips_the_test_when_the_benchmark_is_absent(pair):
@@ -236,7 +283,9 @@ def test_summarise_skips_the_test_when_the_benchmark_is_absent(pair):
     with pytest.warns(RuntimeWarning, match='not in this run'):
         table = summarise({'a': _result('a', x), 'b': _result('b', b)},
                           n_boot=99)
-    assert 'sr_diff' not in table.index
+    assert 'sharpe_pval' not in table.index
+    # The rest of the table is unaffected by the missing benchmark.
+    assert 'sharpe' in table.index
 
 
 def test_summarise_test_matches_calling_the_test_directly(pair):
@@ -246,6 +295,5 @@ def test_summarise_test_matches_calling_the_test_directly(pair):
                        'strategy': _result('strategy', x)},
                       n_boot=199, seed=2)
     direct = sharpe_difference_test(x, b, n_boot=199, seed=2)
-    assert table.loc['sr_diff', 'strategy'] == pytest.approx(direct['sr_diff'])
-    assert table.loc['sr_diff_pval_boot', 'strategy'] == pytest.approx(
+    assert table.loc['sharpe_pval', 'strategy'] == pytest.approx(
         direct['pval_boot'])

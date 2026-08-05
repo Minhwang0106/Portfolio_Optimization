@@ -56,10 +56,10 @@ class BacktestResult:
         net_returns (pd.Series): The same, after the transaction cost charged on
             that month's rebalance. Identical to `returns` when `cost_bps` is 0.
         diagnostics (pd.DataFrame): Per-month `net_exposure`, `gross_exposure`,
-            `turnover`, `cost`, `n_holdings`, `effective_n`, `max_weight` and
-            `unpriced_weight`, on the same index as `returns`. Read
-            `effective_n` (inverse Herfindahl) rather than `n_holdings` to judge
-            breadth -- see `_WEIGHT_TOLERANCE`.
+            `turnover`, `cost`, `n_holdings`, `effective_n`, `max_weight`,
+            `entropy` and `unpriced_weight`, on the same index as `returns`.
+            Read `entropy` or `effective_n` rather than `n_holdings` to judge
+            breadth -- see `_weight_entropy` and `_WEIGHT_TOLERANCE`.
         weights (pd.DataFrame): Target weights at each *formation* date, one
             column per ticker, NaN where not held. Rebalance dates only.
         failures (dict[pd.Timestamp, str]): Formation dates whose weighting rule
@@ -71,6 +71,41 @@ class BacktestResult:
     diagnostics: pd.DataFrame
     weights: pd.DataFrame
     failures: dict[pd.Timestamp, str] = field(default_factory=dict)
+
+
+def _weight_entropy (held: pd.Series, gross: float)-> float:
+    """Shannon entropy of the book, in nats: `-sum p ln p` on `p = |w|/gross`.
+
+    A breadth measure that answers the same question as `effective_n` but
+    weights the tail differently: the inverse Herfindahl is driven by the
+    largest positions, while entropy also notices whether the remaining capital
+    is spread evenly or itself concentrated. An equal-weighted book of `N` names
+    scores `ln N`, so `exp(entropy)` is readable as a name count and is what
+    makes the two comparable. A single-name book scores 0.
+
+    Taken on absolute weights over gross exposure so that it is defined for a
+    long-short book too, where a signed weight has no reading as a probability.
+    That makes it a measure of where the *risk* is spread, not of net position.
+
+    Args:
+        held (pd.Series): The book, signed weights.
+        gross (float): `held.abs().sum()`, passed in since the caller has it.
+
+    Returns:
+        float: Entropy in nats, 0 for an empty or fully concentrated book.
+
+    Example:
+        >>> import numpy as np
+        >>> np.isclose(_weight_entropy(pd.Series([0.25]*4), 1.0), np.log(4))
+        True
+    """
+    if gross <= 0 or not len(held):
+        return 0.0
+    share: np.ndarray = (held.abs()/gross).to_numpy(dtype=float)
+    # Only the non-zero terms: `p ln p` tends to 0 as p -> 0, but `log(0)` is
+    # -inf and would take the sum with it.
+    share = share[share > 0]
+    return float(-(share*np.log(share)).sum())
 
 
 def _drift (held: pd.Series, realised: pd.Series, port_return: float
@@ -224,6 +259,7 @@ def backtest (weight_fn: WeightFn, dates: Iterable[pd.Timestamp],
         # of magnitude, and only this one is honest about the concentration.
         sq: float = float((held**2).sum())
         index.append(earn_date)
+        entropy: float = _weight_entropy(held, gross)
         gross_r.append(port_return)
         rows.append({'net_exposure': float(held.sum()),
                      'gross_exposure': gross,
@@ -232,6 +268,7 @@ def backtest (weight_fn: WeightFn, dates: Iterable[pd.Timestamp],
                      'n_holdings': int((held.abs() > _WEIGHT_TOLERANCE).sum()),
                      'effective_n': gross**2/sq if sq > 0 else 0.0,
                      'max_weight': float(held.abs().max()) if len(held) else 0.0,
+                     'entropy': entropy,
                      'unpriced_weight': float(held[~priced].abs().sum())})
 
         held = _drift(held, realised, port_return)

@@ -9,6 +9,8 @@ from constant import (testing_period,
                        risk_n_day,
                        risk_n_month,
                        epo_shrinkage,
+                       epo_shrinkage_grid,
+                       epo_w_min_periods,
                        epo_theta,
                        risk_aversion)
 from .utils import init_worker, compute_date
@@ -86,6 +88,14 @@ class EPO:
     Attributes:
         vol, correl, tsmom (dict): Class-level, keyed by stringified date. Set
             by `Config`.
+        candidate (dict[str, dict[float, pd.Series]]): Class-level. Unconstrained
+            closed-form weight per date per candidate shrinkage. Set by `Config`.
+        realized (dict[str, pd.Series | None]): Class-level. Next month's
+            realised excess return per date, keyed like `candidate`. Set by
+            `Config`.
+        chosen_w (dict[str, float]): Class-level. The shrinkage `_select_w`
+            picked for each date -- see `constant.epo_shrinkage`. Set by
+            `Config`.
         date (str): This instance's formation date.
     """
     def __init__(self, date:str) -> None:
@@ -95,12 +105,14 @@ class EPO:
     def Config(cls, com=risk_com, correl_com=risk_correl_com,
                       n_day=risk_n_day, n_month=risk_n_month,
                       n_workers: int | None = None, force: bool = False):
-        """Precompute per-date volatility, correlation, and TSMOM signal for all dates.
+        """Precompute per-date risk inputs, w-selection inputs, and chosen w.
 
         Runs `compute_date` (from `utils`) over every date in `testing_period`,
         in parallel via a process pool (unless `n_workers` <= 1), and stores
         the results as class-level attributes `EPO.vol`, `EPO.correl`,
-        `EPO.tsmom` so that `portfolio_weight` can look them up per instance.
+        `EPO.tsmom`, `EPO.candidate`, `EPO.realized` so that `portfolio_weight`
+        can look them up per instance. Then runs `_select_w` once over all
+        dates to populate `EPO.chosen_w` -- see `constant.epo_shrinkage`.
 
         Idempotent: returns immediately if already configured, so a repeat call
         cannot silently redo the whole parallel sweep. Pass `force=True` to
@@ -118,8 +130,9 @@ class EPO:
                 otherwise they are ignored. Defaults to False.
 
         Returns:
-            None. Populates `EPO.vol`, `EPO.correl`, `EPO.tsmom` (each a dict
-            keyed by stringified date).
+            None. Populates `EPO.vol`, `EPO.correl`, `EPO.tsmom`, `EPO.candidate`,
+            `EPO.realized` (each a dict keyed by stringified date) and
+            `EPO.chosen_w` (a dict of float keyed the same way).
 
         Example:
             >>> EPO.Config()
@@ -131,6 +144,8 @@ class EPO:
         std_dict: dict[str, pd.Series] = {}
         correl_dict: dict[str, pd.DataFrame] = {}
         tsmom_dict: dict[str, pd.Series] = {}
+        candidate_dict: dict[str, dict[float, pd.Series]] = {}
+        realized_dict: dict[str, pd.Series|None] = {}
 
         if n_workers is None:
             n_workers = max(1, (os.cpu_count() or 2) - 1)
@@ -146,31 +161,86 @@ class EPO:
         for result in results:
             if result is None:
                 continue
-            key, std, correl, tsmom = result
+            key, std, correl, tsmom, candidates, realized = result
             std_dict[key] = std
             correl_dict[key] = correl
             tsmom_dict[key] = tsmom
+            candidate_dict[key] = candidates
+            realized_dict[key] = realized
 
         cls.vol = std_dict
         cls.correl = correl_dict
         cls.tsmom = tsmom_dict
+        cls.candidate = candidate_dict
+        cls.realized = realized_dict
+        cls.chosen_w = cls._select_w(candidate_dict, realized_dict)
         cls._configured: bool = True
+
+    @staticmethod
+    def _select_w (candidate: dict[str, dict[float, pd.Series]],
+                   realized: dict[str, pd.Series|None]
+                   )-> dict[str, float]:
+        """Out-of-sample shrinkage selection (`constant.epo_shrinkage`'s
+        docstring has the full rationale).
+
+        Walks the dates in `candidate` in the order `Config` inserted them --
+        chronological, since it iterates `testing_period` -- and at each date
+        scores every point in `constant.epo_shrinkage_grid` by the realised
+        Sharpe ratio its unconstrained closed-form weight earned over every
+        *earlier* formation date. A date's own return never contributes to its
+        own score, and a date whose grid score has no history yet falls back
+        to `constant.epo_shrinkage`.
+
+        Args:
+            candidate (dict[str, dict[float, pd.Series]]): Per date, the
+                unconstrained weight at each grid point (`compute_date`'s
+                third output).
+            realized (dict[str, pd.Series | None]): Per date, next month's
+                realised excess return, or None at the last date.
+
+        Returns:
+            dict[str, float]: Chosen `w` per stringified formation date.
+        """
+        chosen: dict[str, float] = {}
+        history: list[tuple[dict[float, pd.Series], pd.Series]] = []
+        for key, cand in candidate.items():
+            if len(history) < epo_w_min_periods:
+                chosen[key] = epo_shrinkage
+            else:
+                best_w, best_sr = epo_shrinkage, -np.inf
+                for w in epo_shrinkage_grid:
+                    rets: list[float] = []
+                    for hist_cand, hist_realized in history:
+                        x_w: pd.Series = hist_cand[w]
+                        common = x_w.index.intersection(hist_realized.index)
+                        if len(common) == 0:
+                            continue
+                        rets.append(float(x_w[common]@hist_realized[common]))
+                    if not rets:
+                        continue
+                    arr: np.ndarray = np.array(rets)
+                    sr: float = arr.mean()/(arr.std(ddof=1)+1e-12)
+                    if sr > best_sr:
+                        best_sr, best_w = sr, w
+                chosen[key] = best_w
+            this_realized: pd.Series|None = realized[key]
+            if this_realized is not None:
+                history.append((cand, this_realized))
+        return chosen
 
     def portfolio_weight (self, long_only: bool = True):
         """Compute Enhanced Portfolio Optimization (EPO) weights for this instance's date.
 
         Shrinks the correlation matrix toward the identity matrix (via
         `epo_theta`), builds a shrunk covariance matrix from vol and
-        correlation, further blends it toward identity (via `epo_shrinkage`),
-        then maximises `w'mu - gamma/2 w'Sigma w` over the TSMOM signal.
-        Requires `Config` to have been called first to populate `EPO.vol`,
-        `EPO.correl`, `EPO.tsmom`.
+        correlation, further blends it toward identity by `EPO.chosen_w[date]`
+        -- the shrinkage `_select_w` picked out-of-sample for this date, see
+        `constant.epo_shrinkage` -- then maximises `w'mu - gamma/2 w'Sigma w`
+        over the TSMOM signal. Requires `Config` to have been called first to
+        populate `EPO.vol`, `EPO.correl`, `EPO.tsmom`, `EPO.chosen_w`.
 
-        `epo_shrinkage` is the weight on the *identity*, i.e. the shrinkage
-        intensity, so `Sigma_hat = vol @ ((1-s)C + sI) @ vol`. It used to be the
-        weight on the correlation matrix, which meant the stated 0.75 was
-        applying a shrinkage of 0.25; results produced before that change are
-        not comparable to results produced after it.
+        The shrinkage is the weight on the *identity*, so
+        `Sigma_w = vol @ ((1-w)C + wI) @ vol`.
 
         Args:
             long_only (bool): Constrain the book to `w >= 0, sum(w) == 1` and
@@ -205,11 +275,11 @@ class EPO:
         vol: np.ndarray = np.diag(EPO.vol[self.date].to_numpy())
         signal: np.ndarray = EPO.tsmom[self.date].to_numpy()
         n_stock: int = correl.shape[0]
+        w: float = EPO.chosen_w[self.date]
 
         shrink_correl: np.ndarray = correl*epo_theta+(1-epo_theta
                                                       )*np.identity(n_stock)
-        epo_correl: np.ndarray = (1-epo_shrinkage)*shrink_correl+(
-                                epo_shrinkage)*np.identity(n_stock)
+        epo_correl: np.ndarray = (1-w)*shrink_correl+w*np.identity(n_stock)
         epo_Sigma: np.ndarray = vol@epo_correl@vol
         if not long_only:
             return np.linalg.solve(epo_Sigma,signal)/risk_aversion
