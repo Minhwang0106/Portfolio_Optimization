@@ -5,7 +5,14 @@ from pathlib import Path
 #General variable
 PROJECT_DIR: Path = Path(__file__).resolve().parent
 RAW_DATA_DIR: Path = PROJECT_DIR / "Data" / "raw file"
-RESULT_DIR: Path = PROJECT_DIR / "Result"
+# Everything the project produces lives under Data/Result, split by how far it
+# has been worked up: `raw_backtest` is the full output of a run, most of which
+# no table ever shows; `processed_backtest` and `latex` hold *only* the numbers
+# that appear in the paper, the same content in the two forms it is needed in.
+RESULT_DIR: Path = PROJECT_DIR / "Data" / "Result"
+RAW_BACKTEST_DIR: Path = RESULT_DIR / "raw_backtest"
+PROCESSED_BACKTEST_DIR: Path = RESULT_DIR / "processed_backtest"
+LATEX_DIR: Path = RESULT_DIR / "latex"
 
 daily_price: str = "daily_price.csv"
 monthly_price: str = "monthly_price.csv"

@@ -5,7 +5,6 @@ __pycache__/
 Instruction/
 .venv/
 backtest/
-Result/
 accounting.csv.bak
 monthly_price.csv.bak
 current problem

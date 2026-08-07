@@ -1,0 +1,36 @@
+% Requires: \usepackage{booktabs} \usepackage{threeparttable}
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{Difference tests against the equal-weight benchmark.}
+\label{tab:inference}
+\begin{threeparttable}
+\begin{tabular}{lrrrr}
+\toprule
+ & {EPO} & {PPP} & {Proposed (hist.)} & {Proposed (fwd.)} \\
+\midrule
+\multicolumn{5}{l}{\textit{Panel A: Mean return}} \\
+Difference & -3.96 & -0.72 & 18.68$^{***}$ & 22.86$^{***}$ \\
+$t$-statistic & -1.48 & -0.40 & 2.73 & 3.19 \\
+Bootstrap $p$-value & [0.170] & [0.688] & [0.004] & [0.000] \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel B: Sharpe ratio}} \\
+Difference & -0.22 & -0.10 & 0.30 & 0.45 \\
+$t$-statistic & -1.27 & -1.04 & 1.16 & 1.64 \\
+Bootstrap $p$-value & [0.227] & [0.306] & [0.269] & [0.111] \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel C: CRRA certainty equivalent}} \\
+Difference & -3.11 & -3.29 & 2.74 & 8.71 \\
+$t$-statistic & -1.03 & -1.27 & 0.36 & 1.05 \\
+Bootstrap $p$-value & [0.318] & [0.261] & [0.723] & [0.304] \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[flushleft]\footnotesize
+\item Sample 2015-02 to 2026-01 (132 monthly observations). Returns are net of 10~bps of one-way transaction cost. Each column reports the strategy minus the equal-weight benchmark, whose levels are in Table~\ref{tab:performance}.
+\item All tests are two-sided and paired. Each is a delta method over sample moments with a prewhitened quadratic-spectral HAC long-run covariance (Andrews, 1991; Andrews and Monahan, 1992); the reported $p$-value is from a studentized circular block bootstrap with block length 5 and 4999 resamples (Ledoit and Wolf, 2008).
+\item The panels are ordered from the statistic that does not adjust for risk to the one that penalises it most heavily. A mean return difference is not scale-invariant: it rises with leverage without the accompanying volatility being charged for. Significance in Panel A alongside insignificance in Panels B and C is therefore a statement about volatility, not about skill.
+\item With three tests across four strategies these are twelve comparisons; the notes on multiple testing in the text apply.
+\item $^{***}$, $^{**}$ and $^{*}$ denote significance at the 1\%, 5\% and 10\% levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

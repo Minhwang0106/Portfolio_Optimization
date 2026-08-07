@@ -144,21 +144,28 @@ def _prewhiten (y: np.ndarray)-> tuple[np.ndarray, np.ndarray]:
 
 
 def _psi_hac (y: np.ndarray, prewhite: bool = True)-> np.ndarray:
-    """Long-run covariance of the four moment estimates, Section 3.1.
+    """Long-run covariance of the moment estimates, Section 3.1.
+
+    The dimension is read off `y` rather than fixed at `_N_MOMENT`, so the same
+    estimator serves the Sharpe difference's 4-vector and the certainty
+    equivalent's 2-vector (`ce_inference`). Nothing here is specific to which
+    moments they are -- it estimates the long-run covariance of whatever means
+    the delta method is being applied to.
 
     Args:
-        y (np.ndarray): `(T, 4)` of the paper's `y_t`, already centred.
+        y (np.ndarray): `(T, k)` of the paper's `y_t`, already centred.
         prewhite (bool): Apply the VAR(1) filter. Defaults to True, the paper's
             HAC_pw variant.
 
     Returns:
-        np.ndarray: `(4, 4)` estimate of `Psi`, including the `T/(T-4)`
+        np.ndarray: `(k, k)` estimate of `Psi`, including the `T/(T-k)`
             small-sample factor.
     """
     n_obs: int = len(y)
+    n_moment: int = y.shape[1]
     resid: np.ndarray = y
     coef: np.ndarray|None = None
-    if prewhite and n_obs > _N_MOMENT+1:
+    if prewhite and n_obs > n_moment+1:
         resid, coef = _prewhiten(y)
 
     bandwidth: float = _qs_bandwidth(resid)
@@ -174,9 +181,9 @@ def _psi_hac (y: np.ndarray, prewhite: bool = True)-> np.ndarray:
         psi = psi+weight*(gamma+gamma.T)
 
     if coef is not None:
-        recolour: np.ndarray = np.linalg.inv(np.eye(_N_MOMENT)-coef)
+        recolour: np.ndarray = np.linalg.inv(np.eye(n_moment)-coef)
         psi = recolour@psi@recolour.T
-    return psi*n_obs/(n_obs-_N_MOMENT)
+    return psi*n_obs/(n_obs-n_moment)
 
 
 def _moments (x: np.ndarray, b: np.ndarray)-> np.ndarray:
@@ -236,12 +243,13 @@ def _psi_boot (y: np.ndarray, block: int)-> np.ndarray:
     """`Psi*` from one resample's block structure, Section 3.2.2.
 
     Args:
-        y (np.ndarray): `(n_draw, T, 4)` of `y*_t`, centred at the *original*
-            sample's moments.
+        y (np.ndarray): `(n_draw, T, k)` of `y*_t`, centred at the *original*
+            sample's moments. `k` is read off the array, so this serves the
+            certainty equivalent's 2-vector as well as the Sharpe 4-vector.
         block (int): The block length the resample was built from.
 
     Returns:
-        np.ndarray: `(n_draw, 4, 4)`.
+        np.ndarray: `(n_draw, k, k)`.
 
     Note:
         Scaled by `1/l` over the `l = floor(T/b)` complete blocks, not the `1/T`
@@ -250,7 +258,7 @@ def _psi_boot (y: np.ndarray, block: int)-> np.ndarray:
     n_obs: int = y.shape[1]
     n_full: int = n_obs//block
     blocks: np.ndarray = y[:, :n_full*block].reshape(
-        len(y), n_full, block, _N_MOMENT)
+        len(y), n_full, block, y.shape[-1])
     zeta: np.ndarray = blocks.sum(axis=2)/math.sqrt(block)
     return np.einsum('kja,kjb->kab', zeta, zeta)/n_full
 

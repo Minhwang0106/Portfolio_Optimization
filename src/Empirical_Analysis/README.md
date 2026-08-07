@@ -7,8 +7,20 @@ difference between them is a difference in the weighting rule and nothing else.
 python -m src.Empirical_Analysis.run --n-workers 5
 ```
 
-Writes to `constant.RESULT_DIR` (`Result/`). Add `--only equal_weight epo ppp`
-to skip the slow ones while iterating.
+Writes to `constant.RAW_BACKTEST_DIR` (`Data/Result/raw_backtest/`). Add
+`--only equal_weight epo ppp` to skip the slow ones while iterating.
+
+**Want the paper's tables?**
+
+```
+python -m src.Empirical_Analysis.tables
+```
+
+`tables.py` reads `raw_backtest/` and writes the three reported tables in both
+forms — CSV to `processed_backtest/`, `booktabs` LaTeX to `latex/`. It never
+runs a backtest. The split is deliberate: `raw_backtest/` holds everything a run
+produces, most of which no table shows, and the other two hold only what the
+paper reports.
 
 **Changed a metric? Don't rerun the backtest.**
 

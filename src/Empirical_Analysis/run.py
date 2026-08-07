@@ -60,7 +60,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 from constant import (
-    testing_period, RESULT_DIR, backtest_cost_bps, ppp_estimation_month,
+    testing_period, RAW_BACKTEST_DIR, backtest_cost_bps, ppp_estimation_month,
     risk_aversion
 )
 from .data import universe, monthly_return, risk_free
@@ -209,7 +209,7 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
              seed: int = 0, verbose: bool = False,
              sr_benchmark: str|None = 'equal_weight', n_boot: int = 4999,
              sr_block: int|str = 5,
-             result_dir: Path|None = RESULT_DIR
+             result_dir: Path|None = RAW_BACKTEST_DIR
              )-> tuple[dict[str, BacktestResult], pd.DataFrame]:
     """Backtest every strategy on one universe and one calendar, in parallel.
 
@@ -280,7 +280,7 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
             Defaults to False.
         result_dir (Path | None): Where to write the CSVs. None writes nothing
             and only returns, which is what a notebook wants. Defaults to
-            `constant.RESULT_DIR`.
+            `constant.RAW_BACKTEST_DIR`.
 
     Returns:
         tuple[dict[str, BacktestResult], pd.DataFrame]: The per-strategy runs
@@ -361,7 +361,7 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
 
 
 def save (results: dict[str, BacktestResult], table: pd.DataFrame,
-          rf: pd.Series, result_dir: Path = RESULT_DIR)-> Path:
+          rf: pd.Series, result_dir: Path = RAW_BACKTEST_DIR)-> Path:
     """Write the run to CSV: returns, wealth, summary, diagnostics, weights.
 
     Args:
@@ -370,7 +370,7 @@ def save (results: dict[str, BacktestResult], table: pd.DataFrame,
         rf (pd.Series): Monthly risk-free rate, saved alongside so the Sharpe
             ratios can be recomputed from the returns file alone.
         result_dir (Path): Output directory, created if absent. Defaults to
-            `constant.RESULT_DIR`.
+            `constant.RAW_BACKTEST_DIR`.
 
     Returns:
         Path: The directory written to.
@@ -387,7 +387,7 @@ def save (results: dict[str, BacktestResult], table: pd.DataFrame,
 
     Example:
         >>> save(results, table, risk_free())
-        WindowsPath('.../Result')
+        WindowsPath('.../Data/Result/raw_backtest')
     """
     result_dir.mkdir(parents=True, exist_ok=True)
 
@@ -417,7 +417,7 @@ def save (results: dict[str, BacktestResult], table: pd.DataFrame,
     return result_dir
 
 
-def rebuild (result_dir: Path = RESULT_DIR, dates=testing_period,
+def rebuild (result_dir: Path = RAW_BACKTEST_DIR, dates=testing_period,
              cost_bps: float = backtest_cost_bps,
              sr_benchmark: str|None = 'equal_weight', n_boot: int = 4999,
              sr_block: int|str = 5, seed: int = 0, verify: bool = True
@@ -437,7 +437,7 @@ def rebuild (result_dir: Path = RESULT_DIR, dates=testing_period,
 
     Args:
         result_dir (Path): A directory `save` has written. Defaults to
-            `constant.RESULT_DIR`.
+            `constant.RAW_BACKTEST_DIR`.
         dates: Formation dates, which must be the ones the run used. Defaults to
             `constant.testing_period`.
         cost_bps (float): Transaction cost, likewise. Defaults to
@@ -567,7 +567,7 @@ def _cli ()-> argparse.Namespace:
                              'to run Algorithm 3.1 (default 5)')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--out', type=Path, default=RESULT_DIR)
+    parser.add_argument('--out', type=Path, default=RAW_BACKTEST_DIR)
     return parser.parse_args()
 
 

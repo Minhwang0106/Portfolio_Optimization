@@ -42,7 +42,10 @@ src/
   panel.py                    Shared panel I/O (cached CSV reads, book-equity definition).
 tests/                        pytest suite.
 Data/raw file/                Collected data panels (prices, accounting, factors, universe).
-Result/                       Backtest output (gitignored).
+Data/Result/                  All generated output (gitignored).
+  raw_backtest/               Everything a run produces: returns, weights, diagnostics.
+  processed_backtest/         Only the numbers the paper reports, as CSV.
+  latex/                      The same three tables as \input-able .tex.
 ```
 
 ## Setup
@@ -74,7 +77,7 @@ python -m src.Data.run
 
 This is network-bound and takes hours on a full run; `--resume` picks up an interrupted
 collection, and `--skip-fetch` rebuilds only the universe table from panels already on disk.
-See `python -m src.Data.run --help`.
+See `python -m src.Data.run --help`
 
 **2. Run the backtest.**
 
@@ -83,12 +86,23 @@ python -m src.Empirical_Analysis.run --n-workers 5
 ```
 
 Writes `summary.csv`, `monthly_returns.csv`, `cumulative_wealth.csv`, and per-strategy
-diagnostics to `Result/`. Add `--only equal_weight epo ppp` to skip the slower proposed-model
-runs while iterating, or `--rebuild` to recompute metrics from previously saved weights without
-re-running the backtest. Full flag reference and methodology notes are in
+diagnostics to `Data/Result/raw_backtest/`. Add `--only equal_weight epo ppp` to skip the slower
+proposed-model runs while iterating, or `--rebuild` to recompute metrics from previously saved
+weights without re-running the backtest. Full flag reference and methodology notes are in
 [`src/Empirical_Analysis/README.md`](src/Empirical_Analysis/README.md).
 
-**3. Tests.**
+**3. Build the paper's tables.**
+
+```bash
+python -m src.Empirical_Analysis.tables
+```
+
+Reads `raw_backtest/` and writes the three reported tables twice — as CSV to
+`processed_backtest/` and as `booktabs` LaTeX to `latex/`, ready to `\input{}` into Overleaf.
+Table 3 is the thought experiment of `src/Empirical_Analysis/experiment_thought.py`; pass
+`--skip-experiment` to build only Tables 1 and 2, or `--n-sim 1000` for a faster Monte Carlo.
+
+**4. Tests.**
 
 ```bash
 pytest
