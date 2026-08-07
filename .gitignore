@@ -1,5 +1,8 @@
 __pycache__/
 *.pyc
+# Collected/generated, not source: rebuild with `python -m src.Data.run`.
+# daily_price.csv alone runs >100MB, over GitHub's per-file limit.
+Data/raw file/
 .obsidian/
 .vscode/
 Instruction/
