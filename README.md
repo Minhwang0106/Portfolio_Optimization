@@ -31,7 +31,7 @@ and what the output tables mean.
 
 ```
 constant.py                  All tunable parameters and file paths, in one place.
-main.py                      Unused placeholder entry point.
+main.py                      Runs the whole pipeline end to end: data, backtest, tables.
 src/
   Data/                      Fetches and cleans the raw panels (SEC EDGAR, Yahoo Finance,
                               S&P 500 constituent history) and builds the per-date universe.
@@ -67,6 +67,12 @@ common platforms; if it fails to install, check that your Python/OS combination 
 available.
 
 ## Reproducing the results
+
+**All at once:** `python main.py` runs the three steps below in order — data
+collection, backtest, tables — and can resume from any point with
+`--skip-data`/`--skip-backtest`/`--skip-tables`. See `python main.py --help`.
+The steps are broken out individually below for anyone who wants to run just
+one of them, or needs a flag `main.py` doesn't expose.
 
 **1. Collect the data.** Fetches prices from Yahoo Finance, accounting data from SEC EDGAR,
 and rebuilds the point-in-time investable universe from the S&P 500 constituent history:
