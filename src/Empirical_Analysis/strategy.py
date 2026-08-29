@@ -4,8 +4,8 @@
 by ticker. None of the three models offers that:
 
 * `EPO.portfolio_weight` takes no universe at all -- it looks its own up by date
-  -- and returns a bare array ordered by `EPO.correl[date].columns`. It sums to
-  one under the default `long_only`, and is unnormalised without it.
+  -- and returns a bare array ordered by `EPO.correl[date].columns`. It is
+  unnormalised by default, and sums to one under `long_only=True`.
 * `PPP.portfolio_weight` returns a `(1, n_t)` array ordered by `self.ticker`,
   which is *narrower* than the list passed in and is only readable off the
   instance afterwards.
@@ -32,15 +32,14 @@ _SCALE_FLOOR: float = 1e-12
 def normalise (weight: pd.Series, how: str = 'gross')-> pd.Series:
     """Put a weight vector on a stated scale.
 
-    Only EPO needs this, and only when it runs unconstrained. `PPP` and
-    `RIM_PortOp` both already sum to one -- the first because the standardized
-    tilts cancel, the second because `port_weight` constrains them to -- as does
-    EPO under its default `long_only`. With `long_only=False` EPO returns
-    `Sigma^-1 @ signal / gamma`, whose magnitude is whatever the covariance
-    matrix and the 10% vol target happen to imply. That number is not a
-    portfolio weight in the same sense as the other two, and comparing a Sharpe
-    ratio computed on it against theirs compares two different amounts of
-    capital.
+    Only EPO needs this, and by default EPO always does. `PPP` and `RIM_PortOp`
+    both already sum to one -- the first because the standardized tilts cancel,
+    the second because `port_weight` constrains them to -- as does EPO under
+    `long_only=True`. Unconstrained, which is now EPO's default, it returns
+    `Sigma_w^-1 @ signal / gamma`, whose magnitude is whatever the covariance
+    matrix and the signal scale happen to imply. That number is not a portfolio
+    weight in the same sense as the other two, and comparing a Sharpe ratio
+    computed on it against theirs compares two different amounts of capital.
 
     Args:
         weight (pd.Series): Raw weights, indexed by ticker.
@@ -83,13 +82,14 @@ def normalise (weight: pd.Series, how: str = 'gross')-> pd.Series:
 
 
 def epo_weight (date: pd.Timestamp, tickers: list[str]|None = None,
-                how: str = 'gross', long_only: bool = True)-> pd.Series:
+                how: str = 'gross')-> pd.Series:
     """EPO weights at one formation date, labelled and scaled.
 
     `EPO.Config()` must have run first; it precomputes the per-date vol,
-    correlation and TSMOM inputs over the whole of `constant.testing_period` in
+    correlation and signal inputs over the whole of `constant.testing_period` in
     a process pool, and `EPO.portfolio_weight` raises rather than doing it
-    lazily.
+    lazily. Whether the book is long-only was fixed there, by
+    `Config(long_only=...)`, so there is nothing to pass per date.
 
     Args:
         date (pd.Timestamp): Formation date. Keyed into `EPO.correl` as
@@ -100,12 +100,11 @@ def epo_weight (date: pd.Timestamp, tickers: list[str]|None = None,
             `applicable_ticker.csv` itself in `EPO.utils.compute_date`, so under
             the default backtest configuration this is the same list and the
             intersection is a no-op.
-        how (str): Scale, passed to `normalise`. Defaults to 'gross'. Under
-            `long_only` the model already returns a book summing to one, so all
-            three settings agree up to the renormalisation that follows the
-            intersection with `tickers`.
-        long_only (bool): Solve subject to `w >= 0, sum(w) == 1` rather than
-            taking the closed-form unconstrained maximiser. Defaults to True.
+        how (str): Scale, passed to `normalise`. Defaults to 'gross', which is
+            what makes an unconstrained book one unit of deployed capital.
+            Under `EPO.long_only` the model already returns a book summing to
+            one, so all three settings agree up to the renormalisation that
+            follows the intersection with `tickers`.
 
     Returns:
         pd.Series: One weight per ticker EPO priced at `date`.
@@ -122,7 +121,7 @@ def epo_weight (date: pd.Timestamp, tickers: list[str]|None = None,
         1.0
     """
     key: str = str(date)
-    raw: np.ndarray = EPO(key).portfolio_weight(long_only=long_only)
+    raw: np.ndarray = EPO(key).portfolio_weight()
     # The column order of the correlation matrix is the only thing that says
     # which ticker each element belongs to; `portfolio_weight` returns a bare
     # array, so reading it against any other list scrambles the cross-section.

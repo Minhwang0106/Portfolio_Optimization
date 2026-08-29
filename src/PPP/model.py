@@ -25,7 +25,8 @@ class PPP:
     `long_only` defaults to True, which truncates the short leg and renormalises
     (BSV sec.4) *inside* the fit, so `theta` is estimated on the policy that is
     actually traded. Pass False for the unconstrained policy of the equation
-    above, which on this universe runs to ~3.6x gross exposure.
+    above, which on this universe runs to a median 9.9x gross exposure
+    (4.9x-32.9x across the 132 formation dates).
 
     `PPP.Config()` builds the class-level panels; `__init__` calls it if it has
     not run, so `PPP()` works standalone. Instantiate once, then call
@@ -183,11 +184,23 @@ class PPP:
 
         Note:
             `theta` is seeded with `np.random.random(3)`, so results vary run to
-            run unless the global numpy seed is fixed. Measured over 22
-            formation dates, three independent starts agree to within 0.01, so
-            the start is not what moves the answer -- the window is. Across
-            2015-2025 every coefficient changes sign and the norm ranges 1.3 to
-            10.0, which is the unregularised fit, not the optimiser.
+            run unless the global numpy seed is fixed. How much they vary
+            depends on `long_only`, measured over 22 formation dates:
+
+            * Unconstrained, three independent starts agree to 0.02 on `theta`
+              and 4e-4 on the weights -- the window moves the fit, not the
+              start. The norm runs 6.5 to 40.0 across 2015-2025 and every
+              coefficient changes sign, which is the unregularised fit rather
+              than the optimiser.
+            * Under the `long_only` default `theta` is **not identified**: three
+              starts finish up to 196 apart and the norm has a median of 240.
+              Once it is large the `1/n_t` benchmark term is negligible beside
+              the tilt, leaving `max(x_hat @ theta, 0)` renormalised -- which is
+              homogeneous of degree zero in `theta`, so the objective is flat
+              along the ray and the optimiser stops wherever its tolerance
+              bites. Scaling a fitted `theta` by 200x moves the largest weight
+              by 4e-4. The weights are still reproducible to 0.02; the
+              coefficients are not, and should not be read as exposures.
 
         Warns:
             RuntimeWarning: If `minimize` reports failure. The theta is still

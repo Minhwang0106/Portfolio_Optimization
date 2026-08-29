@@ -13,7 +13,7 @@ performance difference between them is a difference in the weighting rule and no
 | Model | Source | Idea |
 |---|---|---|
 | `src/Proposed_Model` | this paper | Simulates each firm's forward accounting characteristics from a fitted copula, maps each simulated path to an implied return via a residual-income valuation, and optimises a CRRA-utility portfolio over the resulting return distribution |
-| `src/EPO` | Pedersen, Babu & Levine (2021) | Enhanced Portfolio Optimization — mean-variance with the correlation matrix shrunk toward the identity |
+| `src/EPO` | Pedersen, Babu & Levine (2021) | Enhanced Portfolio Optimization — the closed-form solution to a robust max-min problem over an uncertainty region for expected returns, which reduces to mean-variance against a correlation matrix shrunk toward the identity. The paper's Equity 4 specification: XSMOM × σ signal, equal-weighted daily covariance, 5% pre-shrink |
 | `src/PPP` | Brandt, Santa-Clara & Valkanov (2009) | Parametric Portfolio Policy — portfolio weight parameterised directly as a linear function of firm characteristics (momentum, book-to-market, size) |
 
 `equal_weight` is included as the zero-skill benchmark all three are compared against.

@@ -50,12 +50,25 @@ numbers. Pass `verify=False` when a change to the returns is the point.
 | `proposed_historical` | `src.Proposed_Model` | quarterly | long-only, sums to 1 |
 | `proposed_forward` | `src.Proposed_Model`, `forward=True` | quarterly | long-only, sums to 1 |
 
-All five are long-only and fully invested, which is what makes the return column
-comparable across them at all. `--long-short` restores the forms the three
-papers state — and those are *not* comparable to each other on a return basis:
-unconstrained EPO comes out close to market neutral, and unconstrained PPP runs
-to ~3.6x gross exposure. Each model imposes the constraint in its own idiom;
-see "How long-only is imposed" below.
+All five are long-only and fully invested by default, which is what makes their
+return column comparable at all. `--long-short` restores the forms `EPO`, `PPP`
+and the proposed model state in their own papers; unconstrained PPP runs to a
+median 9.9x gross exposure and unconstrained EPO is close to market neutral, so
+neither is comparable to the rest on a return basis. Each model imposes the
+constraint in its own idiom; see "How long-only is imposed" below.
+
+**One EPO row, and it is the constrained one by default.** That is this repo's
+addition, not the paper's: EPO's closed form (eq. 16) is no convenience
+approximation — Proposition 2 (p.13, proved p.36) derives it as the *exact*
+solution to a robust max-min problem over an ellipsoidal uncertainty region for
+expected returns, and that problem carries no sign or budget constraint. The
+constraint is imposed anyway so the EPO row sits on the same footing as `ppp`
+and the proposed model, and `--long-short` is what runs EPO as the paper states
+it. It is one or the other per run: `EPO.Config` builds a single candidate book
+and selects the shrinkage against that book, and the two are close to
+uncorrelated. `src/EPO/README.md` sets out what the constraint breaks — the
+anchor's meaning at `w = 1`, γ's invariance, and how far the pinned budget
+pushes the book toward minimum variance.
 
 `proposed_forward` **is not a strategy.** It elicits each characteristic's
 unconditional moments from the realised future window, so a portfolio formed at
@@ -72,7 +85,7 @@ PPP's contribution is readable as the gap between the two.
 Everything outside the weighting rule has to be identical or the comparison
 measures the harness:
 
-- **Universe.** All five get `Data.exclusion.applicable_ticker`'s list at each
+- **Universe.** All six get `Data.exclusion.applicable_ticker`'s list at each
   date, spelled out below. Each model then screens it further its own way, which
   is a property of the model and shows up in `avg_weight_entropy`, not equalised
   away.
@@ -164,15 +177,32 @@ There is no one way to do this, and the three models need three different
 treatments. What they have in common is that the constraint is imposed *where
 the weights are decided*, never by clipping a finished answer.
 
-**EPO — constrained solve.** `EPO.portfolio_weight` maximises its own
-mean-variance objective `w'mu - gamma/2 w'Sigma w` subject to `w >= 0` and
-`sum(w) = 1`, by SLSQP on the shrunk covariance with an analytic gradient
-(~0.1s for a 150-name date). Clipping the closed-form `Sigma^-1 @ signal / gamma`
-instead would have been one line, but it discards the hedge the short leg was
-funding and leaves a book that is close to just "long the positive-signal
-names": the covariance stops being able to hold a name down for what it is
-correlated with. The constrained solve keeps ~70-85 names of ~150, at an
-effective N near 55.
+**EPO — solved on the simplex, not clipped.** `epo` maximises the objective
+`x's - gamma/2 x'Sigma_w x` subject to `x >= 0` and `1'x = 1`, by SLSQP with an
+analytic gradient (~0.1s for a 300-name date). Clipping the closed form instead
+would have been one line, but it discards the hedge the short leg was funding
+and leaves a book close to just "long the positive-signal names": the covariance
+stops being able to hold a name down for what it is correlated with.
+
+Under `--long-short` no constraint is imposed at all, and the row is eq. (16)
+itself — the solution to the paper's robust problem, not an approximation of a
+constrained one.
+
+That solve is still the robust objective — the two differ by a positive scalar
+and an additive constant, so they share an argmax over any feasible set. Checked
+against eq. (11) *as written*, square root and ellipsoidal inner minimisation
+intact, on the simplex: the argmax matches `_long_only_weight` to 1e-6, and a
+fully nested max-min (inner problem re-solved numerically at every outer
+evaluation) reproduces it at correlation 1.00000000.
+
+What the constraint does break is the anchor's meaning at `w = 1`, γ's
+scale-invariance, and — following from that — how much of the book the signal
+accounts for at all: the mean term is 4.5–17% of the variance penalty at the
+optimum, leaving the constrained book 0.95–0.99 correlated with plain minimum
+variance at low `w`. Because of that, `w` is selected against whichever book the
+run holds (`EPO.Config(long_only=...)`) rather than the constrained solve
+inheriting a `w` ranked on the closed form. All of it is set out in
+`src/EPO/README.md`.
 
 **PPP — truncate inside the fit.** `w+ = max(w, 0) / sum(max(w, 0))`, which is
 Brandt-Santa-Clara-Valkanov's own treatment (sec. 4), applied in `ppp_weight` —
@@ -189,21 +219,29 @@ with an equality constraint; unchanged.
 
 **EPO's correlation shrinkage is the shrinkage, not its complement.**
 `constant.epo_shrinkage` is the weight on the *identity* in
-`Sigma_hat = vol @ ((1-s)C + sI) @ vol`. It was previously read as the weight on
-`C`, so the stated 0.75 was applying a shrinkage of 0.25 — far too light for a
-correlation matrix estimated on ~150 names from 261 daily observations, whose
-condition number runs 7.5e3 to 4.0e4. A sweep of the whole backtest put
-long-short net Sharpe at 0.06 (s=0.25), 0.28 (0.75), 0.33 (0.90) and 0.19
-(0.99); it is now 0.90. **Results produced before this change are not
-comparable to results produced after it.**
+`Sigma_w = vol @ ((1-w)C + wI) @ vol`. It was previously read as the weight on
+`C`, so the stated 0.75 was applying a shrinkage of 0.25 — far too light. A
+sweep of the whole backtest put long-short net Sharpe at 0.06 (w=0.25), 0.28
+(0.75), 0.33 (0.90) and 0.19 (0.99); it was set to 0.90.
 
-**The risk-free charge scales with net exposure.** All five strategies are now
-fully invested, so `r - rf` is right for every one of them. The mechanism still
-matters under `--long-short`, where EPO comes out close to market neutral: its
-longs are funded by its shorts, not by capital, and charging it a full risk-free
-rate would subtract a financing cost it never paid. `metrics.performance`
-subtracts `net_exposure * rf`, which is correct in both cases and needs no
-per-strategy flag.
+**Those numbers are now stale in two ways, and have not been re-measured.** They
+were produced under the *Global* risk model (EWMA vol and correlation on 261 days
+of 3-day overlapping returns) and the TSMOM signal, both of which `src/EPO`
+replaced with the paper's Equity 4 recipe; and 0.90 is now only the fallback used
+before `epo_w_min_periods`, since `w` is selected per date. Re-run the sweep
+before quoting any of it. **Results produced before the Equity 4 change are not
+comparable to results produced after it** — the signal, the risk model, the
+covariance window, and EPO's default constraint all moved.
+
+**The risk-free charge scales with net exposure.** Every strategy in the default
+run is fully invested, so `r - rf` is right for all of them — but under
+`--long-short` both `epo` and `ppp` stop being. Unconstrained EPO comes out
+close to market neutral, its longs funded by its shorts rather than by capital;
+charging it a full risk-free rate would subtract a financing cost it never paid,
+and on a near-zero net exposure that is the difference between a plausible
+Sharpe ratio and a meaningless one. `metrics.performance`
+subtracts `net_exposure * rf`, which is correct for both kinds of book and needs
+no per-strategy flag.
 
 ## Is the Sharpe ratio gap real?
 
@@ -303,8 +341,8 @@ rule raised are still in `failures` and in `failures.csv`.
 
 **Entropy is the breadth measure.** `-Σ p ln p` on `p = |w| / gross`, averaged
 over months. An equal-weighted book of N names scores `ln N`, so `exp(entropy)`
-reads as a name count: 5.63 for `equal_weight` is ~279 names, 4.34 for `epo` is
-~77. It replaces `avg_n_holdings`, `avg_effective_n` and `avg_max_weight`, which
+reads as a name count: 5.63 for `equal_weight` is ~279 names, 4.06 for `epo` is
+~58. It replaces `avg_n_holdings`, `avg_effective_n` and `avg_max_weight`, which
 were three answers to one question — and unlike the inverse Herfindahl, which is
 driven by the largest positions, entropy also notices whether the rest of the
 capital is spread or itself clustered. Taken on absolute weights over gross so

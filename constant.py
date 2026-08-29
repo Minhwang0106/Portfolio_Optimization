@@ -216,11 +216,45 @@ n_quarter: int = 20
 n_month: int = 75
 
 #Enhanced Portfolio Optimization(EPO)
-risk_com: int = 60
-risk_correl_com: int = 150
-risk_rolling: int = 3
-risk_n_day: int = 261
+# The paper's *Equity* risk model (Table 1, p.44; fn.17, p.20), not its Global
+# one: an equal-weighted covariance of trailing daily returns, with the
+# `1/(K-1)` denominator `DataFrame.cov()` already supplies. No EWM decay and no
+# return overlap any more -- `risk_com`, `risk_correl_com` and `risk_rolling`
+# described the Global recipe and were removed with it.
+#
+# The window is `max(risk_n_day, risk_day_per_name * n_t)`, not a fixed length.
+# Table 1 says 120 days flat, and that works for the paper because Equity 4 runs
+# on 49 industry portfolios: 49 assets from 120 observations is a comfortably
+# overdetermined covariance. This universe is 172 names in 2015 rising to 381 by
+# 2025 (see `universe_asof`), so a flat 120 would put `n_t > K` at every date --
+# a sample covariance of rank <= 119 with up to 262 zero eigenvalues, where the
+# 5% pre-shrink is not improving the conditioning so much as supplying the only
+# information the inverse has along those directions. Two observations per name
+# keeps the estimate overdetermined throughout (344 days in 2015, 762 in 2025,
+# both well inside the daily panel's history), at the cost of a window that
+# reaches back further than "recent risk" strictly means.
+#
+# 120 remains the floor, so a universe small enough for the paper's own number
+# gets the paper's own number.
+risk_n_day: int = 120
+risk_day_per_name: int = 2
 risk_n_month: int = 12
+
+# Trading days per year, used to annualize the daily covariance and the
+# volatilities read off its diagonal. The Global recipe got this for free, its
+# `risk_n_day = 261` doubling as a trading year; with the window now sized off
+# the universe the two numbers have to be separate.
+#
+# Not a free choice, despite the paper calling units pure leverage (§7 of
+# `Instruction/epo_equity4_implementation.md`). That holds for the unconstrained
+# closed form, whose Sharpe ratio is scale-invariant, and fails under the
+# long-only `sum(w) = 1` constraint this repo imposes: annualizing scales
+# `w'Sigma w` by 252 but the signal `sigma * XSMOM` by only sqrt(252), so
+# dropping it would raise the mean term's weight in the objective ~16x -- a
+# silent change to EPO's effective risk aversion. Annualized is what makes the
+# `risk_aversion` shared with `PPP` and `Proposed_Model` mean the same thing in
+# all three.
+trading_day_per_year: int = 252
 # Shrinkage intensity of the correlation matrix toward the identity:
 # `Sigma_w = vol @ ((1-w)*C + w*I) @ vol`. w = 0 is plain mean-variance, w = 1
 # ignores correlations entirely.
@@ -229,28 +263,43 @@ risk_n_month: int = 12
 # paper's own out-of-sample procedure (Pedersen, Babu & Levine 2021, the w
 # selection algorithm): `EPO.Config`/`EPO._select_w` walks `testing_period`
 # forward and, at each date, picks the point in `epo_shrinkage_grid` whose
-# *unconstrained* closed-form weight earned the best realised Sharpe ratio over
-# every earlier formation date -- a w is never scored against the date it is
-# then applied to. `epo_shrinkage` below is therefore no longer "the"
-# shrinkage; it is only the fallback used before `epo_w_min_periods` months of
-# realised history exist to select from.
+# weight earned the best realised Sharpe ratio over every earlier formation
+# date -- a w is never scored against the date it is then applied to.
+# `epo_shrinkage` below is therefore no longer "the" shrinkage; it is only the
+# fallback used before `epo_w_min_periods` months of realised history exist to
+# select from.
 #
-# Selection scores the unconstrained closed form even though the book actually
-# held is long-only-constrained (`EPO._long_only_weight`): the constrained
-# solve is a ~0.1s SLSQP call, and the grid search scores every candidate w
-# against every earlier date at every date, so paying that cost per candidate
-# would turn a few seconds of linear algebra into hours. This also matches the
-# paper's own algorithm, which has no long-only constraint to begin with -- so
-# selection is not solving a materially different problem, just the one the
-# paper specifies rather than the constrained variant this repo additionally
-# imposes on the weights actually held.
+# The book that is scored is the book that is held. `EPO.Config(long_only=...)`
+# builds one of the two -- the long-only solve
+# (`EPO.functions._long_only_weight`) by default, the unconstrained closed form
+# under `--long-short` -- and `_select_w` ranks w against that one. Ranking the
+# closed form and applying the winner to the constrained solve, which this did
+# while the two ran as separate labels, was scoring a different portfolio: the
+# two books correlate ~0 at every w below 0.75, and the full-sample selections
+# land at opposite ends of the grid, 0.85-0.95 unconstrained against a bimodal
+# 0.00/1.00 long-only, moving individual weights by up to 10pp.
 #
-# `C` is estimated on ~150 names from 261 daily observations of 3-day
-# overlapping returns and its condition number runs 7.5e3 to 4.0e4, so the
-# unshrunk inverse is mostly reading estimation noise: at w = 0 the raw
-# solution carries 350x gross exposure, at w = 0.25 still 16x. That is the
-# error-maximisation EPO exists to correct, and why a grid weighted toward
-# heavier shrinkage (this one runs 0 to 1) matters more than the exact step.
+# Solving only the configured book is not a cost dodge either way. The search is
+# `O(dates^2 * grid)` in *scoring* but only `O(dates * grid)` in *solving*:
+# `EPO.utils.compute_date` solves each (date, w) once and caches the vector, and
+# `_select_w` then only does arithmetic on what is cached. The long-only default
+# is ~2,800 SLSQP solves over the sample -- minutes, not hours.
+#
+# `C` is estimated on `n_t` names from `risk_day_per_name * n_t` daily
+# observations, so it is overdetermined but only just: two observations per name
+# is enough for a full-rank estimate and nowhere near enough for a well-
+# conditioned one, and the smallest eigenvalues are still mostly sampling error.
+# That is the error-maximisation EPO exists to correct, and why a grid weighted
+# toward heavier shrinkage (this one runs 0 to 1) matters more than the exact
+# step.
+#
+# 0.90 is a fallback only, and it is inherited rather than re-measured. The
+# sweep that chose it -- long-short net Sharpe 0.06 (w=0.25), 0.28 (0.75), 0.33
+# (0.90), 0.19 (0.99) -- was run under the *Global* risk model and the TSMOM
+# signal, neither of which this module uses any more. Re-run it before quoting
+# 0.90 as evidence of anything; the value stands here because it is a defensible
+# prior for a heavily-shrunk equity correlation matrix, not because it was
+# measured on this one.
 epo_shrinkage: float = 0.90
 
 # Candidate values `EPO._select_w` scores, step 0.05 as in the paper.
@@ -267,9 +316,19 @@ epo_shrinkage_grid: tuple[float, ...] = tuple(
 epo_w_min_periods: int = 24
 
 # Weight on `C` in a first blend toward the identity, applied before the
-# selected w. At 1.0 it is the identity operation, which is what it has
-# always been set to; the two-stage form is kept because it is the paper's.
-epo_theta: float = 1.0
+# selected w: `C_tilde = theta*C + (1-theta)*I`, i.e. every off-diagonal
+# correlation multiplied by theta with the diagonal left at 1.
+#
+# 0.95 is the Equity risk model's 5% pre-shrink (Table 1, p.44). This is part of
+# the *risk model* and is applied before EPO ever sees the matrix -- it is not
+# the EPO shrinkage and must not be conflated with `epo_shrinkage`, which is
+# selected per date and runs over a grid. The distinction is what makes the
+# paper's `w = 0%` column score 0.96 rather than the 0.84 of a genuinely
+# unshrunk MVO: at w = 0 the 5% is still there.
+#
+# Was 1.0 (a no-op) for as long as this module ran the Global recipe, which has
+# no pre-shrink.
+epo_theta: float = 0.95
 
 #Parametric Portfolio Policy
 n_cum_month = 12

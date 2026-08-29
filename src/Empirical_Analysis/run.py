@@ -10,15 +10,27 @@ weights a finished run already wrote and recomputes everything downstream of
 them, in seconds rather than hours, without importing a single model. See
 `rebuild`.
 
-Five strategies, of which two are the same model:
+Five strategies, of which one pair is the same model:
 
-All five are long-only and fully invested by default, which is what makes their
-return columns comparable at all; `--long-short` restores the long-short forms
-the three papers state.
+Every weighting rule here is long-only and fully invested by default, which is
+what makes the return columns comparable at all; `--long-short` restores the
+long-short forms the three papers state, and it reaches all of them -- `epo`,
+`ppp` and both `proposed_*` runs.
+
+One EPO row, not two. Under the default it is the objective solved on the
+simplex, which is this repo's addition: eq. (16) is what Proposition 2 (p.13,
+proved p.36) derives as the *exact* solution to a robust max-min problem over
+an ellipsoidal uncertainty region for expected returns, and that problem has no
+sign or budget constraint. `--long-short` is what runs EPO as the paper states
+it, and that is the form to quote against the paper. The shrinkage `w` is
+selected against whichever book is built, never across the two -- see
+`EPO.Config`.
 
 * `equal_weight` -- the benchmark `PPP` tilts away from, on the same universe.
-* `epo` -- Enhanced Portfolio Optimization, monthly, its mean-variance
-  objective solved on the long-only simplex.
+* `epo` -- Enhanced Portfolio Optimization, monthly. Long-only and summing to
+  one by default, so it sits on the same footing as `ppp` and the proposed
+  model; eq. (16) unconstrained, scaled to one unit of gross exposure, under
+  `--long-short`.
 * `ppp` -- the parametric portfolio policy, monthly, shorts truncated inside
   the theta fit.
 * `proposed_historical` -- the residual income model, quarterly, moments
@@ -132,9 +144,15 @@ def _build (label: str, params: dict[str, Any]
         # is one level deep in one worker rather than five ways of
         # oversubscription. `ProcessPoolExecutor` children are non-daemonic,
         # which is what makes a nested pool legal at all.
-        EPO.Config(n_workers=params['epo_workers'])
-        return (partial(epo_weight, how=params['epo_scale'],
-                        long_only=params['long_only']), None)
+        #
+        # The run-level `long_only` reaches EPO exactly as it reaches PPP and
+        # the proposed model: one book is built, one shrinkage is selected
+        # against it, and one EPO row comes out. Under the default that is the
+        # long-only solve, the expensive half of the sweep -- one SLSQP per
+        # date per grid point, which is why this job wants `--epo-workers`.
+        EPO.Config(long_only=params['long_only'],
+                   n_workers=params['epo_workers'])
+        return (partial(epo_weight, how=params['epo_scale']), None)
 
     if label == 'ppp':
         from ..PPP.model import PPP
@@ -235,11 +253,12 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
             notional. Defaults to `constant.backtest_cost_bps`.
         epo_scale (str): How to normalise EPO's raw weights -- 'gross', 'net' or
             'none', passed to `strategy.normalise`. Defaults to 'gross'. Under
-            the default `long_only` this barely bites, EPO's book already
-            summing to one; it matters when `long_only` is off, where EPO
-            returns `Sigma^-1 @ signal / gamma`, whose leverage is whatever the
-            covariance matrix implies rather than a decision the model made, and
-            'gross' reads it as a self-financing long-short book.
+            the long-only default this barely bites, that book already summing
+            to one; it is what makes EPO readable at all under `--long-short`,
+            since unconstrained EPO returns `Sigma_w^-1 @ signal / gamma`, whose
+            leverage is whatever the covariance matrix implies rather than a
+            decision the model made, and 'gross' reads it as a self-financing
+            long-short book.
         epo_workers (int | None): Processes for `EPO.Config`'s own inner sweep.
             None takes EPO's default of `cpu_count - 1`. Drop it if the outer
             pool is already saturating the machine. Defaults to None.
@@ -254,14 +273,23 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
             to 4.
         common_theta (bool): Pool the proposed model's decay estimate across the
             universe. Defaults to True.
-        long_only (bool): Constrain all three models to a non-negative book
-            summing to one, each in its own idiom -- bounded SLSQP for the
-            proposed model, a constrained mean-variance solve for EPO, and BSV's
+        long_only (bool): Constrain every model to a non-negative book summing
+            to one, each in its own idiom -- bounded SLSQP for the proposed
+            model, SLSQP on the simplex for `epo`, and BSV's
             truncate-and-renormalise for PPP, applied inside the theta fit
-            rather than after it. Defaults to True. False restores the
-            long-short forms, which are the ones the three papers state but
-            which are not comparable to each other on a return basis: EPO comes
-            out near market neutral and PPP at ~3.6x gross.
+            rather than after it. Defaults to True.
+
+            False restores the long-short forms those papers state, which are
+            not comparable to each other on a return basis: PPP runs at a
+            median 9.9x gross, 32.9x at its worst date, while EPO returns
+            `Sigma_w^-1 @ signal / gamma` and is rescaled by `epo_scale`. It is
+            the form to quote EPO against its paper, eq. (16) being the exact
+            solution to Proposition 2's unconstrained robust problem.
+
+            For EPO it also changes which book the shrinkage `w` is selected
+            on, since `EPO.Config` builds one book and ranks `w` against that
+            one; the two are close to uncorrelated, so this is not a cosmetic
+            difference.
         seed (int): Base seed. Fixes PPP's optimiser start and seeds the
             proposed model's copula draw per date. Defaults to 0.
         sr_benchmark (str | None): Strategy whose Sharpe ratio every other one
@@ -555,7 +583,9 @@ def _cli ()-> argparse.Namespace:
                         help='rebalance the proposed model monthly (very slow)')
     parser.add_argument('--long-short', action='store_true',
                         help='let EPO, PPP and the proposed model go short, '
-                             'i.e. run each paper as stated')
+                             'i.e. run those papers as stated. For EPO this '
+                             'also reselects the shrinkage against the '
+                             'unconstrained book')
     parser.add_argument('--sr-benchmark', default='equal_weight',
                         choices=[*STRATEGIES, 'none'],
                         help='strategy whose Sharpe ratio the others are '
