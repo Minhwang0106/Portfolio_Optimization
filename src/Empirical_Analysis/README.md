@@ -48,7 +48,7 @@ numbers. Pass `verify=False` when a change to the returns is the point.
 | `epo` | `src.EPO` | monthly | long-only, sums to 1 |
 | `ppp` | `src.PPP` | monthly | long-only, sums to 1 |
 | `proposed_historical` | `src.Proposed_Model` | quarterly | long-only, sums to 1 |
-| `proposed_forward` | `src.Proposed_Model`, `forward=True` | quarterly | long-only, sums to 1 |
+| `proposed_ex_post` | `src.Proposed_Model`, `ex_post=True` | quarterly | long-only, sums to 1 |
 
 All five are long-only and fully invested by default, which is what makes their
 return column comparable at all. `--long-short` restores the forms `EPO`, `PPP`
@@ -70,7 +70,7 @@ uncorrelated. `src/EPO/README.md` sets out what the constraint breaks — the
 anchor's meaning at `w = 1`, γ's invariance, and how far the pinned budget
 pushes the book toward minimum variance.
 
-`proposed_forward` **is not a strategy.** It elicits each characteristic's
+`proposed_ex_post` **is not a strategy.** It elicits each characteristic's
 unconditional moments from the realised future window, so a portfolio formed at
 `t` has already seen accounting figures through `t + 3 years`. It is in the run
 because the gap between it and `proposed_historical` decomposes the model's
@@ -296,7 +296,7 @@ to the `b = 4` and `b = 6` the paper's two applications calibrated to at a
 comparable `T`.
 
 It makes little difference either way: across the whole grid the p-values here
-move by less than 0.02. The one case worth naming is `proposed_forward`, which
+move by less than 0.02. The one case worth naming is `proposed_ex_post`, which
 goes from 0.111 at `b = 5` to 0.098 at `b = 1` — i.e. it straddles 10%, which is
 a reason to distrust that threshold on this data rather than to prefer a block
 size.

@@ -49,11 +49,11 @@ BENCHMARK: str = 'equal_weight'
 # Benchmark first, then the two models from the literature, then ours -- the bar,
 # what clears it, and what this paper proposes.
 STRATEGY_ORDER: tuple[str, ...] = ('equal_weight', 'epo', 'ppp',
-                                   'proposed_historical', 'proposed_forward')
+                                   'proposed_historical', 'proposed_ex_post')
 STRATEGY_LABEL: dict[str, str] = {
     'equal_weight': 'Equal-weight', 'epo': 'EPO', 'ppp': 'PPP',
     'proposed_historical': 'Proposed (hist.)',
-    'proposed_forward': 'Proposed (fwd.)'}
+    'proposed_ex_post': 'Proposed (ex post)'}
 
 # Everything from `metrics.SUMMARY_ROWS` except `sharpe_pval`, which moves to
 # Table 2 so that all the inference lives in one place.

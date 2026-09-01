@@ -171,7 +171,7 @@ def ppp_weight (model: PPP, date: pd.Timestamp, tickers: list[str],
 
 def proposed_weight (date: pd.Timestamp, tickers: list[str],
                      n_samples: int = 10000, n_lags: int = 4,
-                     forward: bool = False, common_theta: bool = True,
+                     ex_post: bool = False, common_theta: bool = True,
                      seed: int|None = None, long_only: bool = True
                      )-> pd.Series:
     """Residual-income model weights at one formation date.
@@ -185,21 +185,26 @@ def proposed_weight (date: pd.Timestamp, tickers: list[str],
             names with at least `constant.min_char_obs` complete quarters.
         n_samples (int): Simulated paths per ticker. Defaults to 10000.
         n_lags (int): Lags the persistence fit reads. Defaults to 4.
-        forward (bool): Elicit the unconditional moments from the *realised*
+        ex_post (bool): Elicit the unconditional moments from the *realised*
             future window rather than from the training window. Defaults to
             False.
 
             **This is lookahead and the returns it produces are not
             tradeable.** `take_training_data` hands `RIM_PortOp` a future window
             running `constant.n_quarter_ahead` quarters past the formation date,
-            and under `forward=True` the mean and variance each characteristic
+            and under `ex_post=True` the mean and variance each characteristic
             is simulated around come from that window -- so the portfolio formed
             at `t` has already seen the accounting figures through `t + 3
             years`. Its purpose is to decompose the model's error: run against
-            `forward=False` it separates how much of the shortfall is the
+            `ex_post=False` it separates how much of the shortfall is the
             simulation machinery and how much is simply not knowing the future
             moments. Read it as an upper bound on what perfect moment
             forecasting would buy, never as a strategy.
+
+            Named `ex_post`, not `forward`, to match the manuscript. "Forward"
+            reads in finance as a forward-*looking* estimate built from
+            information available now, which is implementable -- the opposite
+            of what this flag does.
 
         common_theta (bool): Pool the decay estimate across the universe.
             Defaults to True.
@@ -219,7 +224,7 @@ def proposed_weight (date: pd.Timestamp, tickers: list[str],
         1.0
     """
     model: RIM_PortOp = RIM_PortOp(date, tickers)
-    return model.weight(n_samples=n_samples, n_lags=n_lags, forward=forward,
+    return model.weight(n_samples=n_samples, n_lags=n_lags, ex_post=ex_post,
                         common_theta=common_theta, seed=seed,
                         long_only=long_only).astype(float)
 

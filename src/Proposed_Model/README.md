@@ -13,7 +13,7 @@ compares against the `EPO` and `PPP` baselines.
 from src.Proposed_Model.model import RIM_PortOp
 
 model = RIM_PortOp('2020-03-31', ticker_list)   # Config() runs automatically
-w = model.weight(n_samples=10000, n_lags=4, forward=False,
+w = model.weight(n_samples=10000, n_lags=4, ex_post=False,
                   common_theta=True, seed=0, long_only=True)
 ```
 
@@ -23,16 +23,16 @@ standalone. Instantiate fresh per formation date — the universe narrowing in
 `__init__` (`take_training_data`, then the `min_char_obs` completeness screen)
 is per-instance, not shared.
 
-`forward=True` elicits each characteristic's unconditional moments from the
+`ex_post=True` elicits each characteristic's unconditional moments from the
 *realised future* window instead of the training window — this is
-`proposed_forward` in the backtest, a lookahead diagnostic that decomposes the
+`proposed_ex_post` in the backtest, a lookahead diagnostic that decomposes the
 model's error into simulation machinery vs. moment forecasting, **never a
 strategy to trade or quote on its own.**
 
 In practice this is driven by the backtest harness:
 
 ```bash
-python -m src.Empirical_Analysis.run --only proposed_historical proposed_forward
+python -m src.Empirical_Analysis.run --only proposed_historical proposed_ex_post
 ```
 
 which rebalances quarterly by default (`quarter_ends`, since the accounting
@@ -46,7 +46,7 @@ full backtest takes about ten hours. Profiling one real formation date
 (2020-09-30, 272 usable tickers) at the production defaults
 (`n_samples=10000`, `constant.n_quarter_ahead=80`) gives **591s (~9.9 min) for
 one `.weight()` call**, and there are 44 quarterly formation dates times two
-variants (`proposed_historical`, `proposed_forward`) in a full run.
+variants (`proposed_historical`, `proposed_ex_post`) in a full run.
 
 Where the time goes, by internal (`tottime`) cost:
 
@@ -66,7 +66,7 @@ second here). It's that `constant.n_quarter_ahead = 80` — an 80-quarter,
 20-year simulation horizon — multiplies every per-ticker, per-sample operation
 80x, for every one of the ~1,087 copula edges (the cross-sectional tree over
 tickers plus each ticker's own 4-characteristic inner tree), at every
-formation date, for both `proposed_historical` and `proposed_forward`.
+formation date, for both `proposed_historical` and `proposed_ex_post`.
 
 **To iterate quickly**, drop `n_samples` (Monte Carlo standard error scales as
 `1/sqrt(n_samples)`, so this is a pure precision/speed trade) and/or run a

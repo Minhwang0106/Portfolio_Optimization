@@ -307,7 +307,7 @@ def take_training_data (df:pd.DataFrame, date: str|pd.Timestamp,
             needs since it is not the list it passed in. `df_future` is on that
             same universe but is not what narrows it -- a name can survive here
             and still have no future rows, which only matters to
-            `RIM_PortOp.sampling(forward=True)`.
+            `RIM_PortOp.sampling(ex_post=True)`.
 
     Note:
         A formation date that is itself a quarter end backs off one quarter; any

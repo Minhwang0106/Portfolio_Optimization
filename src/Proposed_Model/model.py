@@ -174,7 +174,7 @@ class RIM_PortOp:
             inner_copula[ticker] = copula_structure(temp,controls)
         return outer_copula, inner_copula
     
-    def sampling (self, n_samples: int = 10000,n_lags:int=4,forward:bool=False,
+    def sampling (self, n_samples: int = 10000,n_lags:int=4,ex_post:bool=False,
                   common_theta:bool=True,seed:int|None=None):
         outer_copula, inner_copula = self.depedence_structure()
         # `sample_joint` already takes a seed; passing it through is what makes a
@@ -185,14 +185,14 @@ class RIM_PortOp:
         )
         tickers: list[str] = list(uniform_sample.keys())
         large_traindata: pd.DataFrame = self.train_df.loc[tickers,CHARACTERISTICS]
-        if forward:
+        if ex_post:
             # A name can sit in `self.ticker` and carry no future row at all --
             # `take_training_data` picks the universe on the *training* window
             # alone, deliberately, so the formation date never selects on data
             # it cannot see. Slicing by the full list raises KeyError and takes
             # the whole date down (FITB's date, 2018-06-30, has one such name).
             # Those tickers fall back to their training moments rather than
-            # being dropped, so the forward run's universe stays identical to
+            # being dropped, so the ex post run's universe stays identical to
             # the baseline it exists to be compared against.
             in_future: set[str] = set(
                 self.future_df.index.get_level_values('ticker'))
@@ -236,10 +236,10 @@ class RIM_PortOp:
             # puts a 0 into `sample_conditional`, which raises and costs the whole
             # formation date for one ticker in 172. Only reachable when the
             # elicitation window is not the training window, i.e. under
-            # `forward=True`; the training law is the only other unconditional
+            # `ex_post=True`; the training law is the only other unconditional
             # one available, and is non-degenerate wherever the column fitted.
             fallback_var: np.ndarray = np.asarray(var_x,dtype=np.float64)
-            if forward:
+            if ex_post:
                 _, train_var = parameter_derived(train_df)
                 fallback_var = np.where(fallback_var > 0, fallback_var,
                                         np.asarray(train_var,dtype=np.float64))
@@ -267,7 +267,7 @@ class RIM_PortOp:
             # sense as a non-finite one and takes the same fallback, or
             # `sample_conditional` raises and the whole formation date is lost.
             # It is reachable whenever the variance and the lag correlation are
-            # elicited from different windows -- i.e. under `forward=True`,
+            # elicited from different windows -- i.e. under `ex_post=True`,
             # where eq (18) goes infeasible because the realised future is less
             # dispersed than the training correlation implies. `var_x` is the
             # unconditional law of whichever window was elicited, so it remains
@@ -308,15 +308,18 @@ class RIM_PortOp:
                     real_val_arr[:,:,j] = inverse(real_val_arr[:,:,j])
             sample[ticker] = real_val_arr
         return sample
-    def joint_return (self, n_samples: int = 10000,n_lags:int=4,forward:bool=False,
+    def joint_return (self, n_samples: int = 10000,n_lags:int=4,ex_post:bool=False,
                   common_theta:bool=True,seed:int|None=None)->pd.DataFrame:
         """Annualised implied return per simulated path, per ticker.
 
         Args:
             n_samples (int): Simulations per ticker. Defaults to 10000.
             n_lags (int): Lags the persistence fit reads. Defaults to 4.
-            forward (bool): Elicit the unconditional moments from the future
-                window rather than the training window. Defaults to False.
+            ex_post (bool): Elicit the unconditional moments from the future
+                window rather than the training window -- i.e. from data that
+                did not exist at the formation date. Not implementable; it
+                exists to bound what better fundamental forecasts are worth.
+                Defaults to False.
             common_theta (bool): Pool the decay estimate across the universe.
                 Defaults to True.
             seed (int | None): Seed for the copula draw. Defaults to None, i.e.
@@ -327,7 +330,7 @@ class RIM_PortOp:
                 per simulation. NaN where a path implies a non-positive payoff,
                 which has no real annualised growth rate.
         """
-        sample: dict[str, np.ndarray] = self.sampling(n_samples,n_lags,forward,
+        sample: dict[str, np.ndarray] = self.sampling(n_samples,n_lags,ex_post,
                                                       common_theta,seed)
         # `self.ticker` order, not `sample.keys()`. The returned array carries no
         # labels, so a caller has nothing to read row i by except this instance's
@@ -412,10 +415,10 @@ class RIM_PortOp:
         # mapping positional weights back to names, say -- got a silently
         # scrambled cross-section rather than an error.
         return pd.DataFrame(np.array(return_list),index=tickers)
-    def weight (self, n_samples: int = 10000,n_lags:int=4,forward:bool=False,
+    def weight (self, n_samples: int = 10000,n_lags:int=4,ex_post:bool=False,
                   common_theta:bool=True,seed:int|None=None, long_only:bool=True):
         return_df: pd.DataFrame = self.joint_return(n_samples,n_lags,
-                                                    forward,common_theta,seed)
+                                                    ex_post,common_theta,seed)
         weight: pd.Series = port_weight(return_df,long_only=long_only)
         return weight
         

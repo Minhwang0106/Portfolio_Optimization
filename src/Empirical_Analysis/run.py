@@ -35,7 +35,7 @@ selected against whichever book is built, never across the two -- see
   the theta fit.
 * `proposed_historical` -- the residual income model, quarterly, moments
   elicited from the training window. **This is the tradeable one.**
-* `proposed_forward` -- the same model with `forward=True`, i.e. moments
+* `proposed_ex_post` -- the same model with `ex_post=True`, i.e. moments
   elicited from the realised future window. **Lookahead; not a strategy.** It
   exists to split the model's error into the part that is the simulation
   machinery and the part that is not knowing the future moments -- the gap
@@ -80,11 +80,11 @@ from .engine import backtest, quarter_ends, BacktestResult, WeightFn
 from .metrics import summarise, cumulative_wealth
 
 STRATEGIES: tuple[str, ...] = ('equal_weight', 'epo', 'ppp',
-                               'proposed_historical', 'proposed_forward')
+                               'proposed_historical', 'proposed_ex_post')
 
 # The two that call `RIM_PortOp`, and the elicitation window each one uses.
 _PROPOSED: dict[str, bool] = {'proposed_historical': False,
-                              'proposed_forward': True}
+                              'proposed_ex_post': True}
 
 
 def _dated_seed (base: int, date: pd.Timestamp)-> int:
@@ -98,12 +98,12 @@ def _dated_seed (base: int, date: pd.Timestamp)-> int:
 
 
 def _proposed_at (date: pd.Timestamp, tickers: list[str], base_seed: int,
-                  n_samples: int, n_lags: int, forward: bool, common_theta: bool,
+                  n_samples: int, n_lags: int, ex_post: bool, common_theta: bool,
                   long_only: bool)-> pd.Series:
     """`strategy.proposed_weight` with the seed varied by date. See `_dated_seed`."""
     from .strategy import proposed_weight
     return proposed_weight(date, tickers, n_samples=n_samples, n_lags=n_lags,
-                           forward=forward, common_theta=common_theta,
+                           ex_post=ex_post, common_theta=common_theta,
                            seed=_dated_seed(base_seed, date),
                            long_only=long_only)
 
@@ -175,7 +175,7 @@ def _build (label: str, params: dict[str, Any]
         return (partial(_proposed_at, base_seed=params['seed'],
                         n_samples=params['n_samples'],
                         n_lags=params['n_lags'],
-                        forward=_PROPOSED[label],
+                        ex_post=_PROPOSED[label],
                         common_theta=params['common_theta'],
                         long_only=params['long_only']),
                 quarter_ends(dates) if params['proposed_quarterly'] else None)
@@ -320,7 +320,7 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
             strategy that does not exist.
 
     Note:
-        `proposed_forward` is a lookahead diagnostic, not a strategy -- its
+        `proposed_ex_post` is a lookahead diagnostic, not a strategy -- its
         moments are elicited from the realised future window. See the module
         docstring and `strategy.proposed_weight`. It is in the summary table
         because the gap to `proposed_historical` is the number worth reading;
@@ -557,7 +557,7 @@ def rebuild (result_dir: Path = RAW_BACKTEST_DIR, dates=testing_period,
 
 def _cli ()-> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Backtest the proposed model (historical and forward), '
+        description='Backtest the proposed model (historical and ex post), '
                     'EPO and PPP on one universe.')
     parser.add_argument('--rebuild', action='store_true',
                         help='recompute the summary from the saved weights in '
