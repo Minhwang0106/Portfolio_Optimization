@@ -5,6 +5,12 @@
     python main.py --skip-data --skip-backtest    # tables only, from a saved run
     python main.py --only equal_weight epo ppp    # skip the slow proposed-model runs
     python main.py --skip-experiment              # skip Table 3's Monte Carlo
+    python main.py --sec-user-agent "Your Name you@example.com"   # SEC contact string
+
+Stage 1 fetches from SEC EDGAR, which identifies and throttles callers by
+User-Agent, so it needs a contact string of your own. At a terminal you are
+prompted for one; `--sec-user-agent` or `$SEC_USER_AGENT` supplies it up front,
+and is the only way when stdin is not a terminal. `--skip-data` needs neither.
 
 Three stages, each a thin wrapper around the module that actually does the
 work -- nothing here is reimplemented, so this can't drift from
@@ -43,9 +49,11 @@ def _elapsed (start: float)-> str:
     return f'{seconds/60:.1f} min' if seconds >= 60 else f'{seconds:.1f} s'
 
 
-def run_data_stage (resume: bool)-> None:
+def run_data_stage (resume: bool, user_agent: str|None)-> None:
     from src.Data.run import main as data_main
     argv: list[str] = ['--resume'] if resume else []
+    if user_agent:
+        argv += ['--user-agent', user_agent]
     data_main(argv)
 
 
@@ -80,6 +88,11 @@ def main (argv: list[str]|None = None)-> None:
     parser.add_argument('--data-resume', action='store_true',
                         help="pass --resume to the data stage, picking up an "
                              "interrupted collection instead of starting over")
+    parser.add_argument('--sec-user-agent', default=None, metavar='STRING',
+                        help='contact string sent to SEC EDGAR as the '
+                             'User-Agent by the data stage, e.g. "Your Name '
+                             'you@example.com". Overrides $SEC_USER_AGENT; at '
+                             'a terminal you are prompted if you give neither')
     parser.add_argument('--skip-backtest', action='store_true',
                         help='skip the backtest; use the results already '
                              'saved to Data/Result/raw_backtest/')
@@ -112,7 +125,8 @@ def main (argv: list[str]|None = None)-> None:
     else:
         _banner('Stage 1/3 -- Data collection')
         stage_start: float = time.time()
-        run_data_stage(resume=args.data_resume)
+        run_data_stage(resume=args.data_resume,
+                       user_agent=args.sec_user_agent)
         print(f'\nData collection done in {_elapsed(stage_start)}.')
 
     if args.skip_backtest:

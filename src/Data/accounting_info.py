@@ -1,3 +1,5 @@
+import os
+import sys
 import pandas as pd
 import requests
 from constant import (
@@ -8,25 +10,125 @@ from .utils import (
     fix_misscaled_rows, drop_placeholder_rows,
 )
 
+SEC_USER_AGENT_ENV: str = 'SEC_USER_AGENT'
+
+
+def _prompt_for_user_agent (attempts: int = 3)-> str:
+    """Ask for a contact string at an interactive terminal.
+
+    Written to stderr, and read with `input()`, so a run whose stdout is
+    redirected to a log still shows the question on the terminal. Only called
+    when stdin is a TTY; see `sec_header`.
+
+    Args:
+        attempts (int): How many blank entries to tolerate before giving up.
+
+    Returns:
+        str: The string entered, or '' if the user gave none, closed stdin
+            (EOF) or interrupted -- all of which leave `sec_header` to raise.
+    """
+    print('SEC EDGAR identifies and throttles callers by User-Agent, so this '
+          'collection\nneeds a contact string of your own -- your name and an '
+          'email address,\ne.g. "Your Name you@example.com".',
+          file=sys.stderr)
+    for _ in range(attempts):
+        # The prompt goes to stderr too, rather than through `input`'s own
+        # argument, so the whole exchange stays on one stream: `input` writes
+        # its prompt to stdout, which a run redirected to a log would swallow.
+        print('SEC contact string: ', end='', file=sys.stderr, flush=True)
+        try:
+            entered: str = input().strip()
+        except (EOFError, KeyboardInterrupt):
+            print(file=sys.stderr)
+            return ''
+        if entered:
+            if '@' not in entered:
+                print('  (note: SEC asks for an address they can reach you at; '
+                      'continuing anyway)', file=sys.stderr)
+            print(f'  Set {SEC_USER_AGENT_ENV} in your environment to skip this '
+                  'prompt next time.', file=sys.stderr)
+            return entered
+        print('  A contact string is required.', file=sys.stderr)
+    return ''
+
+
+def sec_header (user_agent: str|None = None,
+                prompt: bool|None = None)-> dict[str, str]:
+    """Build the EDGAR request header from an argument, the environment or a prompt.
+
+    Resolution order: the `user_agent` argument, then `$SEC_USER_AGENT`, then --
+    at an interactive terminal only -- a prompt. There is deliberately no
+    default value. SEC's fair-access policy throttles and blocks by User-Agent,
+    so a contact string baked into the source would attribute every user's
+    collection -- some 570 tickers apiece -- to whichever address happened to be
+    committed, and get that address rate-limited for traffic it never generated.
+    The header also exists so SEC can reach whoever is making the requests,
+    which a shared value defeats for everyone but its owner.
+
+    The prompt is gated on `sys.stdin.isatty()` rather than being unconditional.
+    This collection is a job measured in hours, and the ways it is actually
+    started -- redirected to a log, backgrounded, resumed from a script, run in
+    CI -- have no one sitting at the terminal to answer. Prompting there would
+    either block forever or die on `EOFError` at whatever hour it was reached,
+    where raising immediately says what is wrong while someone is still watching.
+
+    Args:
+        user_agent (str|None): Contact string to send. Takes precedence over
+            `$SEC_USER_AGENT`; None or blank falls through to it.
+        prompt (bool|None): Override the interactivity check -- True always
+            asks, False never does. Defaults to whether stdin is a terminal.
+
+    Returns:
+        dict[str, str]: The `User-Agent` header for every EDGAR request.
+
+    Raises:
+        RuntimeError: If no source supplies one, naming every way in.
+
+    Note:
+        SEC documents the format as a descriptive string, not a bare address:
+        'Your Name your.email@example.com'. See
+        https://www.sec.gov/os/webmaster-faq#developers
+
+    Example:
+        >>> sec_header('Jane Doe jane@example.edu')
+        {'User-Agent': 'Jane Doe jane@example.edu'}
+    """
+    resolved: str = ((user_agent or '').strip()
+                     or os.environ.get(SEC_USER_AGENT_ENV, '').strip())
+    if not resolved:
+        interactive: bool = sys.stdin.isatty() if prompt is None else prompt
+        if interactive:
+            resolved = _prompt_for_user_agent()
+    if not resolved:
+        raise RuntimeError(
+            'SEC EDGAR requires a contact string identifying whoever is making '
+            'the requests. Set it in the environment:\n'
+            '  $env:SEC_USER_AGENT = "Your Name you@example.com"   # PowerShell\n'
+            '  export SEC_USER_AGENT="Your Name you@example.com"   # macOS/Linux\n'
+            'or pass it to whichever entry point you are running:\n'
+            '  python -m src.Data.run --user-agent "Your Name you@example.com"\n'
+            '  python main.py --sec-user-agent "Your Name you@example.com"\n'
+            'At an interactive terminal you are prompted for it instead.\n'
+            'See https://www.sec.gov/os/webmaster-faq#developers')
+    return {'User-Agent': resolved}
+
 
 class Sec_Data_Restructure:
     class_description: dict = {}
     link: str = "https://www.sec.gov/files/company_tickers.json"
-    header: dict = {
-                'User-Agent': 'risotoblack@gmail.com'
-            }
     root_companyfacts: str = "https://data.sec.gov/api/xbrl/companyfacts/CIK"
 
-    def __init__(self,ticker:str, header=header) -> None:
+    def __init__(self,ticker:str, header: dict[str, str]|None = None) -> None:
+        # Resolved per instance rather than bound once as a class-level default.
+        # `run` builds one header and passes it in, so a whole collection reads
+        # the environment once and fails before its first request, not at
+        # ticker 570.
         self.ticker = ticker.upper().replace('.','-')
-        self.header = header
+        self.header = header if header is not None else sec_header()
         self.share_info, self.fs_info = self.get_facts(ticker)
 
     def cik_matching(self, ticker: str) -> str:
         """Look up a ticker's 10-digit zero-padded SEC CIK number.
-
-        Args:
-            ticker (str): Ticker symbol, case-insensitive.
 
         `constant.cik_override` is consulted first, for the re-incorporations
         where SEC's own file points the symbol at a holding company that has

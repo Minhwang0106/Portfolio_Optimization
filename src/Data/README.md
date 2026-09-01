@@ -49,8 +49,24 @@ python -m src.Data.run --help
 
 ## Prerequisites
 
-- Outbound HTTPS to `www.sec.gov` and Yahoo Finance. SEC EDGAR requires a
-  descriptive `User-Agent`; see `accounting_info.py`.
+- Outbound HTTPS to `www.sec.gov` and Yahoo Finance.
+- **A SEC contact string of your own.** SEC identifies and throttles callers by
+  `User-Agent`, so there is no shared default: a descriptive string
+  (`Your Name you@example.com`, not a bare address). At a terminal you are
+  prompted for one; pass it up front, or set it once per shell, to skip that.
+
+  ```bash
+  python -m src.Data.run --user-agent "Your Name you@example.com"
+  # or, once per shell:
+  $env:SEC_USER_AGENT = "Your Name you@example.com"   # PowerShell
+  export SEC_USER_AGENT="Your Name you@example.com"   # macOS/Linux
+  ```
+
+  The prompt is gated on stdin being a terminal, so a redirected, backgrounded
+  or CI run raises straight away rather than blocking on a question nobody is
+  there to answer. `--skip-fetch` touches no network and needs none of this.
+  See `accounting_info.sec_header` and
+  [SEC's webmaster FAQ](https://www.sec.gov/os/webmaster-faq#developers).
 - **Windows, project path with non-ASCII characters**: `network.py` exists
   because `yfinance`'s `curl_cffi` backend cannot open a CA bundle whose path
   isn't representable in the process ANSI codepage — this project's own path

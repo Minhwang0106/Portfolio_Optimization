@@ -42,7 +42,9 @@ src/
   panel.py                    Shared panel I/O (cached CSV reads, book-equity definition).
 tests/                        pytest suite.
 Data/raw file/                Collected data panels (prices, accounting, factors, universe).
-Data/Result/                  All generated output (gitignored).
+                              Gitignored -- rebuild with `python -m src.Data.run`.
+Data/Result/                  All generated output. Tracked, so the tables can be rebuilt
+                              without re-running the data collection or the backtest.
   raw_backtest/               Everything a run produces: returns, weights, diagnostics.
   processed_backtest/         Only the numbers the paper reports, as CSV.
   latex/                      The same three tables as \input-able .tex.
@@ -62,15 +64,30 @@ or, without `uv`:
 pip install -e .
 ```
 
+Either route puts `constant` and `src.*` on the path, so the commands below work from any
+directory. This is a repository to clone and run rather than a library to depend on —
+`constant` and `src` are generic top-level names.
+
 `pyvinecopulib` (used by the copula fit in `Proposed_Model`) ships prebuilt wheels for the
 common platforms; if it fails to install, check that your Python/OS combination has one
 available.
+
+**Windows, non-ASCII checkout path.** If the path you clone into contains non-ASCII
+characters, set `PYTHONUTF8=1` — Python otherwise defaults stdout to cp1252 and any script
+printing a path dies with `UnicodeEncodeError: 'charmap' codec can't encode character ...`.
+`src/Data/` has a second, related caveat about the CA bundle; see
+[`src/Data/README.md`](src/Data/README.md#prerequisites).
 
 ## Reproducing the results
 
 **All at once:** `python main.py` runs the three steps below in order — data
 collection, backtest, tables — and can resume from any point with
 `--skip-data`/`--skip-backtest`/`--skip-tables`. See `python main.py --help`.
+Because `Data/Result/` is tracked, `python main.py --skip-data --skip-backtest`
+rebuilds every reported table from the saved run — neither the hours of collection
+nor the ten-hour backtest is needed to check the numbers. Tables 1 and 2 take about
+a second; Table 3's Monte Carlo takes roughly two minutes on top of that, or ~14
+seconds with `--n-sim 1000`, and `--skip-experiment` leaves it out entirely.
 The steps are broken out individually below for anyone who wants to run just
 one of them, or needs a flag `main.py` doesn't expose.
 
@@ -78,14 +95,33 @@ one of them, or needs a flag `main.py` doesn't expose.
 and rebuilds the point-in-time investable universe from the S&P 500 constituent history:
 
 ```bash
-python -m src.Data.run
+python -m src.Data.run --user-agent "Your Name you@example.com"
 ```
 
-This is network-bound and takes hours on a full run; `--resume` picks up an interrupted
-collection, and `--skip-fetch` rebuilds only the universe table from panels already on disk.
-See `python -m src.Data.run --help`
+SEC identifies and throttles EDGAR callers by `User-Agent`, so this step needs a contact
+string of your own — there is no shared default. At a terminal you are simply **prompted**
+for one, so the flag is optional; supply it up front to skip the prompt, or set
+`SEC_USER_AGENT` once per shell to skip it for good:
 
-**2. Run the backtest.**
+```bash
+$env:SEC_USER_AGENT = "Your Name you@example.com"   # PowerShell
+export SEC_USER_AGENT="Your Name you@example.com"   # macOS/Linux
+```
+
+`python main.py` takes the same string as `--sec-user-agent`. There is no prompt when
+stdin is not a terminal — a run redirected to a log, backgrounded, or driven from CI
+raises immediately instead, rather than blocking for hours on a question nobody is there
+to answer. SEC asks for a descriptive string rather than a bare address; see their
+[webmaster FAQ](https://www.sec.gov/os/webmaster-faq#developers).
+
+This is network-bound and takes hours on a full run; `--resume` picks up an interrupted
+collection, and `--skip-fetch` rebuilds only the universe table from panels already on disk
+and needs no contact string. See `python -m src.Data.run --help`
+
+**2. Run the backtest.** Needs the panels from step 1 — `Data/raw file/` is
+gitignored, so a fresh clone has to collect them first. Without it this step (and
+`--rebuild`, which recomputes returns from saved weights and prices) stops at a
+missing `monthly_price.csv`.
 
 ```bash
 python -m src.Empirical_Analysis.run --n-workers 5
@@ -132,6 +168,13 @@ If you use this code, please cite:
 [bibtex entry]
 ```
 
+## AI use
+
+AI was used in building this repository and in drafting parts of the accompanying paper —
+implementing code from written specifications, documentation, debugging, and the results
+discussion. [`AI_USE.md`](AI_USE.md) states where, how the output was verified, and what
+it was not used for.
+
 ## License
 
-[license]
+[MIT](LICENSE).

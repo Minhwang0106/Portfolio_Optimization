@@ -984,7 +984,7 @@ wheels = [
 [[package]]
 name = "portfolio-optimization"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "cython" },
     { name = "ipykernel" },

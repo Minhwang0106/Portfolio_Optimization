@@ -1,8 +1,14 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "portfolio-optimization"
 version = "0.1.0"
-description = "Add your description here"
+description = "Residual-income-model portfolio construction, benchmarked against EPO and the Parametric Portfolio Policy on a point-in-time S&P 500 universe"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "cython>=3.2.8",
@@ -20,6 +26,27 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
 ]
+
+# Spelled out rather than left to auto-discovery, which gets this layout wrong:
+# seeing a `src/` directory it infers src-layout and maps `src` as the package
+# root, which drops `constant.py` (imported by ~29 modules) off the path and
+# renames every package -- `Empirical_Analysis.tables` instead of
+# `src.Empirical_Analysis.tables`, which is not what the code imports.
+[tool.setuptools]
+# `constant.py` sits at the repository root and ships as a top-level module.
+# `main.py` deliberately does not: it is a script run from the clone, and a
+# module named `main` in site-packages is a collision waiting to happen.
+py-modules = ["constant"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+# `namespaces` keeps the existing design -- no `__init__.py` anywhere under
+# `src/` -- but it also means any directory qualifies as a package, and an
+# explicit `find` does not inherit setuptools' auto-discovery excludes, so
+# `src.__pycache__` would otherwise be packaged.
+exclude = ["*__pycache__*"]
+namespaces = true
 
 [tool.pytest.ini_options]
 # `src` has no __init__.py; the repo root on sys.path makes it importable as a

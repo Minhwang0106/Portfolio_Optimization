@@ -1,7 +1,7 @@
 import pandas as pd
 import requests
 from pathlib import Path
-from .accounting_info import Sec_Data_Restructure
+from .accounting_info import Sec_Data_Restructure, sec_header
 from .price_data import take_price, take_splits
 from .split_adjust import adjust_shares
 from .exclusion import applicable_ticker as compute_applicable_ticker
@@ -260,6 +260,7 @@ def run (ticker=ticker_data, ratio=ratio,
          universe_asof=universe_asof,
          resume: bool = False,
          checkpoint: int = 25,
+         user_agent: str|None = None,
          )->tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, set[str]]]:
     """Build and save the full dataset: prices, accounting facts, and applicable tickers.
 
@@ -300,6 +301,9 @@ def run (ticker=ticker_data, ratio=ratio,
         checkpoint (int): Flush to disk every this many *fetched* tickers.
             Lower survives interruption with less lost; higher writes fewer,
             larger blocks.
+        user_agent (str|None): Contact string sent to SEC EDGAR as the
+            User-Agent. Falls back to `$SEC_USER_AGENT`; see
+            `accounting_info.sec_header` for why there is no default.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, set[str]]]:
@@ -312,10 +316,16 @@ def run (ticker=ticker_data, ratio=ratio,
             `resume` an empty fetch list is not a failure: there is nothing
             left to collect, and the universe table is rebuilt from what is
             already on disk.
+        RuntimeError: If no SEC contact string is available from either
+            `user_agent` or `$SEC_USER_AGENT`.
 
     Example:
         >>> price, daily_price, accounting, applicable = run(ticker=['AAPL'])
     """
+    # Resolved once, before any network work: a missing contact string is a
+    # misconfiguration, and it should stop the run at second zero rather than
+    # raise inside the fetch loop after an hour of successful requests.
+    header: dict[str, str] = sec_header(user_agent)
     if resume:
         already: set[str] = (_panel_tickers(monthly_price_path)
                              & _panel_tickers(daily_price_path)
@@ -338,7 +348,8 @@ def run (ticker=ticker_data, ratio=ratio,
     fetched: int = 0
     for tick in ticker:
         try:
-           tick_object: Sec_Data_Restructure = Sec_Data_Restructure(tick)
+           tick_object: Sec_Data_Restructure = Sec_Data_Restructure(
+               tick, header=header)
            daily_price, price = take_price(tick)
            shares: pd.DataFrame = tick_object.share_compose()
            accounting: pd.DataFrame = tick_object.line_item_restructure(
@@ -456,6 +467,14 @@ def main (argv: list[str]|None = None)-> None:
         '--checkpoint', type=int, default=25,
         help='flush to disk every N fetched tickers (default: 25)')
     parser.add_argument(
+        '--user-agent', default=None, metavar='STRING',
+        help='contact string sent to SEC EDGAR as the User-Agent, e.g. '
+             '"Your Name you@example.com". Overrides $SEC_USER_AGENT. SEC '
+             'identifies and throttles callers by this header, so one is '
+             'required: at a terminal you are prompted for it, elsewhere the '
+             'run fails without it. Not needed under --skip-fetch, which '
+             'touches no network.')
+    parser.add_argument(
         '--skip-fetch', action='store_true',
         help='skip steps 1-4 and only rebuild the universe table, which is a '
              'pure function of the panels already collected. This is all that '
@@ -464,11 +483,19 @@ def main (argv: list[str]|None = None)-> None:
     args = parser.parse_args(argv)
 
     if not args.skip_fetch:
+        # Resolved here, before `build_ticker_list` rewrites ticker.csv: a run
+        # that cannot identify itself to SEC should cost nothing at all, not a
+        # regenerated file and a fetch list printed to a terminal that is about
+        # to show a traceback instead of a collection. Resolved to a *string*,
+        # not just checked, so that an interactive prompt is answered once here
+        # rather than again inside `run`.
+        user_agent: str = sec_header(args.user_agent)['User-Agent']
         tickers: list[str] = build_ticker_list()
         print(f'{len(tickers)} ticker(s) in the fetch list '
               f'(universe_asof={universe_asof})')
 
-        run(ticker=tickers, resume=args.resume, checkpoint=args.checkpoint)
+        run(ticker=tickers, resume=args.resume, checkpoint=args.checkpoint,
+            user_agent=user_agent)
         run_splits(ticker=tickers, resume=args.resume)
         print(f'share adjustment: {run_share_adjustment()}')
 

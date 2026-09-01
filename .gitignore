@@ -1,5 +1,9 @@
 __pycache__/
 *.pyc
+# Build artefacts from `pip install -e .` / `uv sync`.
+*.egg-info/
+build/
+dist/
 # Collected/generated, not source: rebuild with `python -m src.Data.run`.
 # daily_price.csv alone runs >100MB, over GitHub's per-file limit.
 Data/raw file/
@@ -12,3 +16,4 @@ accounting.csv.bak
 monthly_price.csv.bak
 current problem
 .claude/
+Temporary/
