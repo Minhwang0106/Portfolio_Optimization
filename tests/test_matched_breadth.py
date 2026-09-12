@@ -129,6 +129,12 @@ def test_effective_n_target_reads_the_book_in_force_at_each_date():
     assert got.iloc[1:].tolist() == pytest.approx([2.0, 2.0, 1/0.375, 1.0])
 
 
+def test_a_row_with_no_comparator_is_solved_without_a_floor():
+    from src.Empirical_Analysis.run import _breadth_targets
+    assert (_breadth_targets(['proposed_ex_post_msr'], {}, None, [])
+            == {'proposed_ex_post_msr': None})
+
+
 # --- the one-sided Sharpe test -----------------------------------------------
 
 def test_sharpe_one_sided_hac_pvalues_split_the_two_sided_one():

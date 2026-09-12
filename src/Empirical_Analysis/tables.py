@@ -16,10 +16,11 @@ published table is the kind of error that survives review.
 The three tables:
 
 * **Table 1** -- ex post. Bielstein and Hanauer's portfolio against the proposed
-  model three ways: maximum Sharpe on its simulated moments and CRRA over the
-  whole simulation, both held to B&H's breadth, then CRRA unconstrained. Each
-  row differs from the one before it in one thing -- inputs, then objective,
-  then breadth. Panel A the levels, Panel B each proposed row minus B&H.
+  model four ways, a 2x2: the objective, maximum Sharpe on its simulated
+  moments or CRRA over the whole simulation, crossed with the breadth, held to
+  B&H's or left free. B&H against max Sharpe at its breadth isolates the
+  inputs; each pair of columns isolates one of the other two. Panel A the
+  levels, Panel B each proposed row minus B&H.
 * **Table 2** -- historical, i.e. implementable. Equal weight, EPO, PPP, and the
   proposed model at EPO's breadth, at PPP's, and unconstrained. Panel A the
   levels, Panel B every row minus equal weight, Panel C each matched row minus
@@ -58,17 +59,20 @@ from .ce_inference import ce_difference_test
 from .mean_inference import mean_difference_test
 from . import experiment_thought as thought
 
-# Table 1, ex post: B&H first, then the proposed model's rows, each differing
-# from the one before in one thing -- inputs, then objective, then breadth.
+# Table 1, ex post: B&H first, then the proposed model as a 2x2 -- the two
+# objectives at B&H's breadth, then the two unconstrained. Every column after
+# B&H is the proposed model, which the notes say rather than each header.
 EX_POST_BENCHMARK: str = 'icc_mvo_ex_post'
 EX_POST_ORDER: tuple[str, ...] = ('icc_mvo_ex_post',
                                   'proposed_ex_post_msr_icc_n',
-                                  'proposed_ex_post_icc_n', 'proposed_ex_post')
+                                  'proposed_ex_post_icc_n',
+                                  'proposed_ex_post_msr', 'proposed_ex_post')
 EX_POST_LABEL: dict[str, str] = {
     'icc_mvo_ex_post': 'B&H',
-    'proposed_ex_post_msr_icc_n': 'Proposed, max Sharpe',
-    'proposed_ex_post_icc_n': 'Proposed, CRRA',
-    'proposed_ex_post': 'Proposed, CRRA, unconstrained'}
+    'proposed_ex_post_msr_icc_n': 'Max Sharpe, B&H $N$',
+    'proposed_ex_post_icc_n': 'CRRA, B&H $N$',
+    'proposed_ex_post_msr': 'Max Sharpe, unconstrained',
+    'proposed_ex_post': 'CRRA, unconstrained'}
 
 # Table 2, historical: the benchmark, the two models from the literature, then
 # the proposed model at each one's breadth and unconstrained.
@@ -618,11 +622,13 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
                 'with a Ledoit--Wolf covariance and a 5\\% cap per name. Its '
                 'explicit earnings years are the realised ones over the same '
                 "future window the proposed model's moments are drawn from.",
-                'The proposed rows are solved on one set of simulated implied '
-                'returns. Max Sharpe uses only their mean and covariance; '
-                'CRRA uses the whole distribution. Both are held, at each '
-                "rebalance date, to B\\&H's effective number of names at that "
-                'date; the unconstrained row is the model as specified.',
+                'Every column after B\\&H is the proposed model, solved on one '
+                'set of simulated implied returns. Max Sharpe uses only their '
+                'mean and covariance, through B\\&H\'s own rule; CRRA uses the '
+                "whole distribution. The B\\&H $N$ columns are held, at each "
+                "rebalance date, to at least B\\&H's effective number of names "
+                'at that date; the unconstrained columns are not, and CRRA '
+                'unconstrained is the model as specified.',
                 'Panel B reports each proposed row minus B\\&H. '+tests_note,
                 units_note,
                 f'Panel B carries {n_test} tests; the notes on multiple '

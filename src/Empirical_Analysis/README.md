@@ -54,8 +54,9 @@ numbers. Pass `verify=False` when a change to the returns is the point.
 | `proposed_historical_ppp_n` | `proposed_historical`, re-solved from its dumps | quarterly | long-only, sums to 1, effective N ≥ PPP's at each date |
 | `proposed_ex_post_icc_n` | `proposed_ex_post`, re-solved from its dumps | quarterly | long-only, sums to 1, effective N ≥ `icc_mvo_ex_post`'s at each date |
 | `proposed_ex_post_msr_icc_n` | max Sharpe on `proposed_ex_post`'s simulated mean and covariance | quarterly | long-only, sums to 1, effective N ≥ `icc_mvo_ex_post`'s at each date |
+| `proposed_ex_post_msr` | max Sharpe on `proposed_ex_post`'s simulated mean and covariance | quarterly | long-only, sums to 1 |
 
-All ten are long-only and fully invested by default, which is what makes their
+All eleven are long-only and fully invested by default, which is what makes their
 return column comparable at all. `--long-short` restores the forms `EPO`, `PPP`
 and the proposed model state in their own papers; unconstrained PPP runs to a
 median 9.9x gross exposure and unconstrained EPO is close to market neutral, so
@@ -95,7 +96,9 @@ substitution for B&H's data is listed in `src/ICC_MVO/README.md`. It needs
 `python -m src.Data.industry_pool`) for the industry ROE, and `--long-short`
 leaves it long-only, as B&H state it.
 
-**The four matched rows re-solve; they never simulate.** Each reads the
+**The five re-solved rows never simulate.** `proposed_ex_post_msr` is B&H's
+maximum-Sharpe rule on the simulation's mean and covariance with no breadth
+floor; the other four are matched rows. Each reads the
 proposed model's saved simulated implied returns (`--dump-implied-return`, read
 back from `--replay-dir`) and solves again with a breadth floor
 `sum(w^2) <= 1/N`, where `N` is the comparator's effective N in the book it

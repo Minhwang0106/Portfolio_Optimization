@@ -1,6 +1,6 @@
 """Run every strategy over the sample period and write the comparison out.
 
-    python -m src.Empirical_Analysis.run                      # all ten
+    python -m src.Empirical_Analysis.run                      # all eleven
     python -m src.Empirical_Analysis.run --n-workers 5
     python -m src.Empirical_Analysis.run --only epo ppp --verbose
     python -m src.Empirical_Analysis.run --rebuild            # summary only
@@ -10,16 +10,17 @@ weights a finished run already wrote and recomputes everything downstream of
 them, in seconds rather than hours, without importing a single model. See
 `rebuild`.
 
-Ten strategies: six weighting rules, and four re-solves of the proposed model
-that hold it to a comparator's breadth or put its moments through B&H's rule.
+Eleven strategies: six weighting rules, and five re-solves of the proposed
+model that hold it to a comparator's breadth, put its moments through B&H's
+rule, or both.
 
 Every weighting rule here is long-only and fully invested by default, which is
 what makes the return columns comparable at all; `--long-short` restores the
 long-short forms the three papers state, and it reaches all of them -- `epo`,
 `ppp` and both `proposed_*` runs. It leaves `icc_mvo_ex_post` alone: Bielstein
-and Hanauer state a long-only book, so that is the one it runs. The four
-matched rows stay long-only too: the breadth they are held to is read off a
-long-only book.
+and Hanauer state a long-only book, so that is the one it runs. The five
+re-solved rows stay long-only too: the breadth they are held to is read off a
+long-only book, and B&H's rule is a long-only one.
 
 One EPO row, not two. Under the default it is the objective solved on the
 simplex, which is this repo's addition: eq. (16) is what Proposition 2 (p.13,
@@ -55,16 +56,18 @@ selected against whichever book is built, never across the two -- see
   between it and `proposed_historical` is what perfect moment forecasting would
   be worth. Read it as a ceiling, never as a result.
 
-The four matched rows re-solve the proposed model from the implied-return dumps
-(`strategy.replay_weight`), on the quarterly calendar, and never simulate:
+The five re-solved rows read the proposed model back from the implied-return
+dumps (`strategy.replay_weight`), on the quarterly calendar, and never simulate:
 
 * `proposed_historical_epo_n`, `proposed_historical_ppp_n` -- CRRA, held at
   each rebalance date to EPO's or PPP's effective N at that date.
 * `proposed_ex_post_icc_n` -- CRRA, held to `icc_mvo_ex_post`'s effective N.
 * `proposed_ex_post_msr_icc_n` -- maximum Sharpe on the simulation's mean and
   covariance, held to the same breadth: B&H's rule on this model's moments.
+* `proposed_ex_post_msr` -- the same maximum-Sharpe rule with no breadth floor,
+  the unconstrained counterpart of `proposed_ex_post`.
 
-Each needs its comparator's books, from this run or from `weights_<comparator>.csv`
+Each matched row needs its comparator's books, from this run or from `weights_<comparator>.csv`
 in `--out`, which is how the rows are added to a finished run:
 `--only proposed_historical_epo_n proposed_historical_ppp_n`, then `--rebuild`
 to put every saved strategy back in the summary.
@@ -111,19 +114,22 @@ STRATEGIES: tuple[str, ...] = ('equal_weight', 'epo', 'ppp', 'icc_mvo_ex_post',
                                'proposed_historical_epo_n',
                                'proposed_historical_ppp_n',
                                'proposed_ex_post_msr_icc_n',
-                               'proposed_ex_post_icc_n')
+                               'proposed_ex_post_icc_n',
+                               'proposed_ex_post_msr')
 
 # The two that call `RIM_PortOp`, and the elicitation window each one uses.
 _PROPOSED: dict[str, bool] = {'proposed_historical': False,
                               'proposed_ex_post': True}
 
 # The ones re-solved from the dumps: (dump variant, objective, comparator whose
-# effective N the book is held to at each date). See `strategy.replay_weight`.
-_REPLAY: dict[str, tuple[str, str, str]] = {
+# effective N the book is held to at each date, or None for no floor). See
+# `strategy.replay_weight`.
+_REPLAY: dict[str, tuple[str, str, str|None]] = {
     'proposed_historical_epo_n': ('historical', 'crra', 'epo'),
     'proposed_historical_ppp_n': ('historical', 'crra', 'ppp'),
     'proposed_ex_post_msr_icc_n': ('ex_post', 'max_sharpe', 'icc_mvo_ex_post'),
-    'proposed_ex_post_icc_n': ('ex_post', 'crra', 'icc_mvo_ex_post')}
+    'proposed_ex_post_icc_n': ('ex_post', 'crra', 'icc_mvo_ex_post'),
+    'proposed_ex_post_msr': ('ex_post', 'max_sharpe', None)}
 
 
 def _dated_seed (base: int, date: pd.Timestamp)-> int:
@@ -168,21 +174,24 @@ def effective_n_target (weights: pd.DataFrame, dates: list[pd.Timestamp]
 
 def _breadth_targets (labels: list[str], collected: dict[str, BacktestResult],
                       result_dir: Path|None, dates: list[pd.Timestamp]
-                      )-> dict[str, pd.Series]:
-    """Each matched row's effective-N floor per date, read off its comparator.
+                      )-> dict[str, pd.Series|None]:
+    """Each re-solved row's effective-N floor per date, read off its comparator.
 
     From this call's own run of the comparator where there is one, otherwise
     from the `weights_<comparator>.csv` a finished run left in `result_dir` --
     which is what lets the matched rows be added without re-running EPO, PPP or
-    B&H.
+    B&H. None for a row with no comparator, which is solved without a floor.
 
     Raises:
         FileNotFoundError: If a comparator is neither in this run nor saved in
             `result_dir`.
     """
-    targets: dict[str, pd.Series] = {}
+    targets: dict[str, pd.Series|None] = {}
     for label in labels:
-        comparator: str = _REPLAY[label][2]
+        comparator: str|None = _REPLAY[label][2]
+        if comparator is None:
+            targets[label] = None
+            continue
         if comparator in collected:
             weights: pd.DataFrame = collected[comparator].weights
         else:
