@@ -17,7 +17,7 @@ python -m src.Empirical_Analysis.run --only equal_weight icc_mvo_ex_post
 
 | step | B&H / GLS | here | code |
 |---|---|---|---|
-| ICC | GLS residual income, T = 12, three explicit years, ROE fading linearly to the industry median, clean surplus at payout k | same | `icc_adjusted.gls_path`, `icc_gls` |
+| ICC | GLS residual income, T = 12, three explicit years, ROE fading linearly to the industry median, clean surplus at payout k | eleven explicit years (see 1), so a one-year fade | `icc_adjusted.gls_path`, `icc_gls` |
 | Expected return | ICC + 12-1 momentum rescaled to the ICC's cross-sectional sd − r_f, both winsorised 1%/99% | same, divided by 12 to monthly | `icc_adjusted.expected_excess_return` |
 | Covariance | Ledoit–Wolf (2004, JPM) shrinkage to constant correlation, 60 months | same | `volatility.ledoit_wolf_cc` |
 | Weights | max Sharpe, long-only, ≤ 5% per name, < 0.01% set to 0 | same | `utils.max_sharpe_weight` |
@@ -31,19 +31,26 @@ Each is a substitution for data this repo does not have. Each needs a sentence i
 the Methods section.
 
 1. **Explicit EPS are realised, not forecast. This is lookahead.** B&H use IBES
-   consensus. Here FY1–FY3 are the EPS realised over the three four-quarter
+   consensus. Here FY1–FY11 are the EPS realised over the eleven four-quarter
    blocks after the accounting cutoff (net income over split-adjusted shares).
-   The book formed at `t` has therefore seen three years of future earnings,
-   which is why the row is `icc_mvo_ex_post` and is read against
-   `proposed_ex_post`, never against a tradeable row. The two oracles are not
-   the same window: this one sees 12 quarters, and the proposed model's ex post
-   moments see up to 80.
+   Eleven, not GLS's three, so that this oracle sees the same future window as
+   the proposed model's ex post moments: `n_quarter_ahead` (80) quarters cut
+   off by the panel's end, about 45 at the first formation date. B&H count
+   whole years, so they see up to three quarters less; and they see the
+   realised path year by year, where the proposed model sees only the window's
+   moments -- the comparator holds the sharper foresight. The row is
+   `icc_mvo_ex_post` and is read against the proposed model's ex post rows,
+   never against a tradeable one. With `icc_horizon` at 12, the fade to the
+   industry ROE is a single year, so GLS here runs almost entirely on realised
+   earnings.
 2. **The panel runs out.** Most firms' accounting ends 2026-03-31. From the
-   2023-09-30 formation date onwards, the years past the panel are extrapolated
-   from the last realised one at the sustainable growth rate `(1 − k)·ROE_ind`,
-   and from E0 if no year is realised at all. By 2025-12-31 no year is realised.
-   `Icc_Mvo.inputs['n_oracle_years']` records the count per name. Firms acquired
-   before their third year are extrapolated the same way.
+   2015-09-30 formation date onwards the last explicit years run past the
+   panel and are extrapolated from the last realised one at the sustainable
+   growth rate `(1 − k)·ROE_ind`, and from E0 if no year is realised at all. By
+   2025-12-31 no year is realised -- the same wall the proposed model's ex post
+   window stops at. `Icc_Mvo.inputs['n_oracle_years']` records the count per
+   name. Firms acquired before their last explicit year are extrapolated the
+   same way.
 3. **The payout ratio comes from adjusted closes.** There is no Compustat
    dividend field. Dividends are recovered from Yahoo's close/adjusted-close
    factor, `D_e = C_{e−1}(1 − f_{e−1}/f_e)`, summed over the same four quarters

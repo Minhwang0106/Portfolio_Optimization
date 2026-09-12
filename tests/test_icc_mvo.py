@@ -290,11 +290,12 @@ def eps_q():
 
 def test_realised_eps_sums_complete_blocks_after_the_cutoff(eps_q):
     eps_q.iloc[9, 1] = np.nan                     # a hole in B's second year
-    out = realised_eps(eps_q, pd.Timestamp('2019-12-31'))
+    # GLS's three years, pinned: the default is the ex post window's eleven.
+    out = realised_eps(eps_q, pd.Timestamp('2019-12-31'), n_years=3)
     assert out.loc['A'].tolist() == [26.0, 42.0, 58.0]   # 5-8, 9-12, 13-16
     assert np.isnan(out.loc['B', 'fy2'])
     # One quarter later the third block runs past the panel.
-    assert np.isnan(realised_eps(eps_q, pd.Timestamp('2020-03-31'))
+    assert np.isnan(realised_eps(eps_q, pd.Timestamp('2020-03-31'), n_years=3)
                     .loc['A', 'fy3'])
     assert trailing_eps(eps_q, pd.Timestamp('2019-12-31'))['A'] == 10.0
 

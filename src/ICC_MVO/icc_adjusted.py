@@ -13,11 +13,12 @@ perpetuity. The forecast path the sum runs over has three parts, and none of
 them depends on `r` -- so `gls_path` builds it once per firm and `icc_gls` only
 searches the discount rate:
 
-* Explicit years, 1 to `constant.icc_explicit_years` (3): ROE_t = EPS_t /
+* Explicit years, 1 to `constant.icc_explicit_years` (GLS's base case is 3;
+  11 here, to match the proposed model's ex post window): ROE_t = EPS_t /
   B_{t-1}. GLS and B&H take EPS from analyst consensus; this repo has none and
   uses *realised* EPS instead, which is lookahead -- see `model.Icc_Mvo`.
-* The fade, to year T: ROE moves in a straight line from ROE_3 to the industry
-  median ROE, reaching it in year T.
+* The fade, to year T: ROE moves in a straight line from the last explicit
+  year's ROE to the industry median ROE, reaching it in year T.
 * Book value throughout: clean surplus at a constant payout ratio k,
   B_t = B_{t-1} + EPS_t (1 - k), with EPS_t = ROE_t B_{t-1} in the fade years.
 

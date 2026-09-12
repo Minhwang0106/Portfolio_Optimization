@@ -99,10 +99,11 @@ def complete_eps (realised: pd.DataFrame, e0: pd.Series, growth: pd.Series
     rate, with the sustainable growth rate `(1 - k) * ROE_industry` standing in
     for the analyst forecast there is none of.
 
-    Most firms' accounting ends at 2026-03-31, so from the 2023-09-30 formation
-    date on the third year is extrapolated for about two-thirds of the names,
-    and by 2025-12-31 all three years are. A firm acquired or delisted before
-    its third year is extrapolated the same way.
+    Most firms' accounting ends at 2026-03-31, so at eleven explicit years the
+    last one runs past the panel from the 2015-09-30 formation date on, more of
+    them at every date after, and by 2025-12-31 all are extrapolated -- the
+    same wall the proposed model's ex post window stops at. A firm acquired or
+    delisted before its last explicit year is extrapolated the same way.
 
     Args:
         realised (pd.DataFrame): From `realised_eps`, one column per year.

@@ -434,12 +434,25 @@ ppp_estimation_month: int = 60
 # Bielstein & Hanauer (2019) feed to a maximum-Sharpe optimiser in place of a
 # historical mean. The valuation runs `icc_horizon` years: `icc_explicit_years`
 # of explicit earnings per share, then ROE fading linearly to the industry
-# median by the last year, then residual income held flat as a perpetuity. Both
-# are the GLS base case, which B&H take over unchanged. The explicit years here
-# are *realised* EPS, not analyst forecasts -- see `ICC_MVO.model.Icc_Mvo` for
-# why that makes the arm a lookahead benchmark rather than a strategy.
+# median by the last year, then residual income held flat as a perpetuity. The
+# explicit years here are *realised* EPS, not analyst forecasts -- see
+# `ICC_MVO.model.Icc_Mvo` for why that makes the arm a lookahead benchmark
+# rather than a strategy.
+#
+# Eleven explicit years, not GLS's three. The ex post comparison gives B&H the
+# same future window the proposed model's ex post moments are elicited from:
+# `n_quarter_ahead` quarters, cut off by the panel's end (2026-03-31), so about
+# 45 at the first formation date and 2 at the last. Eleven four-quarter blocks
+# cover that window at every date without per-date code, because
+# `ICC_MVO.inputs.complete_eps` extrapolates every year the panel does not
+# reach -- both oracles stop at the same wall. B&H count whole years, so they
+# see up to three quarters less. With the window equal, B&H hold the sharper
+# foresight of the two (the realised EPS path year by year, against the
+# window's moments), which is the direction a conservative comparison wants.
+# `icc_horizon` must stay above this, so the fade to the industry ROE is a
+# single year: GLS here runs almost entirely on realised earnings.
 icc_horizon: int = 12
-icc_explicit_years: int = 3
+icc_explicit_years: int = 11
 
 # Payout ratio for a firm with no positive earnings to divide by: GLS assume
 # earnings of 6% of total assets for it, so k = dividends / (0.06 * total

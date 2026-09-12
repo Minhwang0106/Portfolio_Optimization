@@ -16,18 +16,20 @@ a historical average. The construction, at each formation date:
 4. Maximum Sharpe ratio, long-only and fully invested, at most 5% in any name,
    weights under 0.01% set to zero (`utils.max_sharpe_weight`).
 
-In this paper it is the design's point-estimate arm (Arm A): the B&H
+In this paper it is the point-estimate benchmark of the ex post table: the B&H
 construction run on this repo's own panels.
 
 **Lookahead: a benchmark, not a strategy.** B&H read the explicit earnings
 years from IBES consensus forecasts, which this repo does not have. It reads the
-*realised* EPS instead -- the three four-quarter blocks after the formation
-date's accounting cutoff -- so the book formed at `t` has seen three years of
-future earnings. That makes it an ICC under perfect earnings foresight, the
-counterpart of `proposed_ex_post` and never a tradeable result. The panel ends
-in 2026, so from the 2023-09-30 formation date on, the later years run past it
-and are extrapolated (`inputs.complete_eps`); how many years each name had
-realised is kept in `Icc_Mvo.inputs['n_oracle_years']`.
+*realised* EPS instead -- the `constant.icc_explicit_years` (11) four-quarter
+blocks after the formation date's accounting cutoff -- so the book formed at `t`
+has seen as much future earnings as the panel holds, the same window
+`proposed_ex_post` elicits its moments from. That makes it an ICC under perfect
+earnings foresight, the counterpart of the proposed model's ex post rows and
+never a tradeable result. The panel ends in 2026, so from the 2015-09-30
+formation date on, the later years run past it and are extrapolated
+(`inputs.complete_eps`); how many years each name had realised is kept in
+`Icc_Mvo.inputs['n_oracle_years']`.
 
 Every other substitute for B&H's data -- dividends from adjusted closes, the
 industry ROE over every SEC filer's firm-years grouped by SIC code, the
@@ -72,7 +74,7 @@ class Icc_Mvo:
         inputs (pd.DataFrame): Per candidate ticker, dropped ones included:
             'price', 'b0' (book equity per share), 'e0' (trailing EPS), 'dps',
             'payout', 'roe_target', 'roe_source' ('ff48' or 'all'),
-            'fy1'..'fy3', 'n_oracle_years', 'icc' and 'momentum'.
+            'fy1'..'fy11', 'n_oracle_years', 'icc' and 'momentum'.
         dropped (dict[str, list[str]]): The tickers each screen removed, each
             ticker under the first screen it failed.
         tickers (pd.Index): The names that pass every screen.
