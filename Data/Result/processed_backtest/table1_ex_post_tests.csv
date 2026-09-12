@@ -1,10 +1,10 @@
-,,,"Proposed, max Sharpe","Proposed, CRRA","Proposed, CRRA, unconstrained"
-Panel B: Difference from B&H,mean_return,Mean return (pp),-0.013181642173747316,0.0845692936233722,0.2254240777052196
-Panel B: Difference from B&H,mean_return,\quad $t$-statistic,-0.5254644138815223,2.890071124836594,3.122158163666895
-Panel B: Difference from B&H,mean_return,\quad Bootstrap $p$-value,0.7136,0.0012,0.0002
-Panel B: Difference from B&H,sharpe,Sharpe ratio,-0.1179314207402918,0.31125632697425953,0.24695578782820826
-Panel B: Difference from B&H,sharpe,\quad $t$-statistic,-0.5637536458802695,1.380116908018346,0.7897031567156496
-Panel B: Difference from B&H,sharpe,\quad Bootstrap $p$-value,0.6844,0.0896,0.2066
-Panel B: Difference from B&H,crra_ce,CRRA certainty equivalent (pp),-0.013816987834177619,0.07360147680104556,0.09742193744651706
-Panel B: Difference from B&H,crra_ce,\quad $t$-statistic,-0.43327978624574714,1.8657336707221783,1.214338115541711
-Panel B: Difference from B&H,crra_ce,\quad Bootstrap $p$-value,0.656,0.0274,0.1072
+,,,"Max Sharpe, B&H $N$","CRRA, B&H $N$","Max Sharpe, unconstrained","CRRA, unconstrained"
+Panel B: Difference from B&H,mean_return,Mean return (pp),-0.013181642173747316,0.0845692936233722,-0.013264090656903545,0.2254240777052196
+Panel B: Difference from B&H,mean_return,\quad $t$-statistic,-0.5254644138815223,2.890071124836594,-0.5040045260844732,3.122158163666895
+Panel B: Difference from B&H,mean_return,\quad Bootstrap $p$-value,0.7136,0.0012,0.7068,0.0002
+Panel B: Difference from B&H,sharpe,Sharpe ratio,-0.1179314207402918,0.31125632697425953,-0.13686147023337908,0.24695578782820826
+Panel B: Difference from B&H,sharpe,\quad $t$-statistic,-0.5637536458802695,1.380116908018346,-0.6136401945303336,0.7897031567156496
+Panel B: Difference from B&H,sharpe,\quad Bootstrap $p$-value,0.6844,0.0896,0.7042,0.2066
+Panel B: Difference from B&H,crra_ce,CRRA certainty equivalent (pp),-0.013816987834177619,0.07360147680104556,-0.016520114477875047,0.09742193744651706
+Panel B: Difference from B&H,crra_ce,\quad $t$-statistic,-0.43327978624574714,1.8657336707221783,-0.49935710939244315,1.214338115541711
+Panel B: Difference from B&H,crra_ce,\quad Bootstrap $p$-value,0.656,0.0274,0.685,0.1072
