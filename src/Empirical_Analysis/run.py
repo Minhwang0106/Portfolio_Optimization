@@ -198,6 +198,29 @@ def _breadth_targets (labels: list[str], collected: dict[str, BacktestResult],
     return targets
 
 
+def universe_from_books (path: Path)-> dict[pd.Timestamp, list[str]]:
+    """The candidate universe a finished run used, read back off its equal-weight books.
+
+    `equal_weight` holds every candidate at every date, so its saved books are
+    the universe of the run that wrote them -- the only record of it once
+    `applicable_ticker.csv` has been rebuilt from newer panels. Running a new
+    strategy on it keeps the "same universe" control against that run intact.
+
+    Args:
+        path (Path): A `weights_equal_weight.csv` that `save` wrote.
+
+    Returns:
+        dict[pd.Timestamp, list[str]]: As `data.universe`.
+
+    Example:
+        >>> uni = universe_from_books(RAW_BACKTEST_DIR/'weights_equal_weight.csv')
+        >>> len(uni[pd.Timestamp('2015-01-31')])
+        169
+    """
+    books: pd.DataFrame = pd.read_csv(path, index_col=0, parse_dates=True)
+    return {date: row.dropna().index.tolist() for date, row in books.iterrows()}
+
+
 def _proposed_at (date: pd.Timestamp, tickers: list[str], base_seed: int,
                   n_samples: int, n_lags: int, ex_post: bool, common_theta: bool,
                   long_only: bool, dump_dir: Path|None = None)-> pd.Series:
@@ -327,7 +350,8 @@ def _run_one (job: tuple[str, dict[str, Any]])-> tuple[str, BacktestResult]:
     label, params = job
     fn, rebal = _build(label, params)
     return_df: pd.DataFrame = monthly_return()
-    uni: dict[pd.Timestamp, list[str]] = universe()
+    uni: dict[pd.Timestamp, list[str]] = (universe() if params['universe'] is None
+                                          else params['universe'])
     with warnings.catch_warnings():
         # The models warn per ticker per date -- thin characteristics, an
         # unfittable conditional law. Informative once, deafening over 132
@@ -372,7 +396,8 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
              sr_block: int|str = 5,
              result_dir: Path|None = RAW_BACKTEST_DIR,
              dump_dir: Path|None = None,
-             replay_dir: Path = IMPLIED_RETURN_DIR
+             replay_dir: Path = IMPLIED_RETURN_DIR,
+             universe_from: Path|None = None
              )-> tuple[dict[str, BacktestResult], pd.DataFrame]:
     """Backtest every strategy on one universe and one calendar, in parallel.
 
@@ -469,6 +494,11 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
             None, i.e. no files.
         replay_dir (Path): Where the matched rows read those files back from.
             Defaults to `constant.IMPLIED_RETURN_DIR`.
+        universe_from (Path | None): A `weights_equal_weight.csv` whose books
+            give the candidate universe at each date, instead of the current
+            `applicable_ticker.csv` -- see `universe_from_books`. For adding a
+            strategy to a run whose panels have since been refetched. Defaults
+            to None, today's universe.
 
     Returns:
         tuple[dict[str, BacktestResult], pd.DataFrame]: The per-strategy runs
@@ -523,6 +553,8 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
         'n_lags': n_lags, 'common_theta': common_theta,
         'long_only': long_only, 'seed': seed, 'verbose': verbose,
         'dump_dir': dump_dir, 'replay_dir': replay_dir,
+        'universe': (None if universe_from is None
+                     else universe_from_books(Path(universe_from))),
     }
     replay: list[str] = [s for s in wanted if s in _REPLAY]
     collected: dict[str, BacktestResult] = _map_jobs(
@@ -796,6 +828,11 @@ def _cli ()-> argparse.Namespace:
                         metavar='DIR',
                         help='where the matched rows read those files back '
                              f'from (default {IMPLIED_RETURN_DIR})')
+    parser.add_argument('--universe-from', type=Path, default=None,
+                        metavar='CSV',
+                        help="run on the universe a finished run used, read off "
+                             "its weights_equal_weight.csv, instead of today's "
+                             'applicable_ticker.csv')
     return parser.parse_args()
 
 
@@ -840,7 +877,8 @@ if __name__ == '__main__':
         long_only=not args.long_short, seed=args.seed, verbose=args.verbose,
         sr_benchmark=sr_benchmark_arg, n_boot=args.n_boot,
         sr_block=sr_block_arg, result_dir=args.out,
-        dump_dir=args.dump_implied_return, replay_dir=args.replay_dir)
+        dump_dir=args.dump_implied_return, replay_dir=args.replay_dir,
+        universe_from=args.universe_from)
     with pd.option_context('display.width', 160,
                            'display.float_format', '{:,.4f}'.format):
         print()

@@ -116,6 +116,14 @@ python -m src.Empirical_Analysis.run --rebuild
 strategies it ran; `--rebuild` replays every `weights_*.csv` in `--out` and puts
 them all back.
 
+**Adding to a run whose panels have since been refetched.** A refetch rebuilds
+`applicable_ticker.csv`, so a strategy run today would screen a different
+universe from the run it joins. `--universe-from
+Data/Result/raw_backtest/weights_equal_weight.csv` runs it on that run's own
+universe instead, read off its equal-weight books -- equal weight holds every
+candidate, so they record the universe exactly. The accounting and price panels
+are still today's.
+
 `equal_weight` is the benchmark `PPP` tilts away from, on the same universe, so
 PPP's contribution is readable as the gap between the two.
 

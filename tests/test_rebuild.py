@@ -10,7 +10,7 @@ import pytest
 
 from src.Empirical_Analysis.engine import backtest
 from src.Empirical_Analysis.metrics import summarise
-from src.Empirical_Analysis.run import rebuild, save
+from src.Empirical_Analysis.run import rebuild, save, universe_from_books
 from src.Empirical_Analysis.strategy import equal_weight
 
 TICKERS = ['AAA', 'BBB', 'CCC']
@@ -83,6 +83,12 @@ def test_rebuild_replays_the_book_held_after_the_universe_moves_on(
                         lambda: {d: ['AAA', 'BBB'] for d in dates})
     _, rebuilt = rebuild(result_dir=out, dates=dates, sr_benchmark=None)
     pd.testing.assert_frame_equal(rebuilt, original)
+
+
+def test_equal_weight_books_give_back_the_universe_of_the_run(saved_run, uni):
+    """Equal weight holds every candidate, so its books are the run's universe."""
+    out, _ = saved_run
+    assert universe_from_books(out/'weights_equal_weight.csv') == uni
 
 
 def test_rebuild_raises_when_the_cost_no_longer_matches_the_run(saved_run,
