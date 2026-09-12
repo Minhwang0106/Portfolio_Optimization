@@ -50,8 +50,12 @@ numbers. Pass `verify=False` when a change to the returns is the point.
 | `icc_mvo_ex_post` | `src.ICC_MVO` | quarterly (`--icc-annual`: each June) | long-only, ≤ 5% per name, sums to 1 |
 | `proposed_historical` | `src.Proposed_Model` | quarterly | long-only, sums to 1 |
 | `proposed_ex_post` | `src.Proposed_Model`, `ex_post=True` | quarterly | long-only, sums to 1 |
+| `proposed_historical_epo_n` | `proposed_historical`, re-solved from its dumps | quarterly | long-only, sums to 1, effective N ≥ EPO's at each date |
+| `proposed_historical_ppp_n` | `proposed_historical`, re-solved from its dumps | quarterly | long-only, sums to 1, effective N ≥ PPP's at each date |
+| `proposed_ex_post_icc_n` | `proposed_ex_post`, re-solved from its dumps | quarterly | long-only, sums to 1, effective N ≥ `icc_mvo_ex_post`'s at each date |
+| `proposed_ex_post_msr_icc_n` | max Sharpe on `proposed_ex_post`'s simulated mean and covariance | quarterly | long-only, sums to 1, effective N ≥ `icc_mvo_ex_post`'s at each date |
 
-All six are long-only and fully invested by default, which is what makes their
+All ten are long-only and fully invested by default, which is what makes their
 return column comparable at all. `--long-short` restores the forms `EPO`, `PPP`
 and the proposed model state in their own papers; unconstrained PPP runs to a
 median 9.9x gross exposure and unconstrained EPO is close to market neutral, so
@@ -72,20 +76,45 @@ anchor's meaning at `w = 1`, γ's invariance, and how far the pinned budget
 pushes the book toward minimum variance.
 
 `proposed_ex_post` **is not a strategy.** It elicits each characteristic's
-unconditional moments from the realised future window, so a portfolio formed at
-`t` has already seen accounting figures through `t + 3 years`. It is in the run
+unconditional moments from the realised future window, `constant.n_quarter_ahead`
+(80) quarters cut off by the panel's end, so a portfolio formed at `t` has
+already seen accounting figures as far ahead as the panel runs -- about 45
+quarters at the first formation date, 2 at the last. It is in the run
 because the gap between it and `proposed_historical` decomposes the model's
 error into the simulation machinery and the moment forecast — a ceiling on what
 perfect moment forecasting would buy, never a result to quote on its own.
 
 `icc_mvo_ex_post` **is not a strategy either.** It is Bielstein & Hanauer's
 (2019) construction — maximum Sharpe ratio on the Gebhardt-Lee-Swaminathan
-implied cost of capital plus rescaled momentum — but its three explicit earnings
-years are the *realised* ones, since the repo has no analyst forecasts. It is
-the design's point-estimate arm, read against `proposed_ex_post`; every
+implied cost of capital plus rescaled momentum — but its eleven explicit
+earnings years are the *realised* ones, since the repo has no analyst
+forecasts, over the same future window `proposed_ex_post` elicits its moments
+from. It is the point-estimate benchmark of the ex post table; every
 substitution for B&H's data is listed in `src/ICC_MVO/README.md`. It needs
-`industry.csv` (`python -m src.Data.industry`) for the industry ROE, and
-`--long-short` leaves it long-only, as B&H state it.
+`industry.csv` and `industry_roe_pool.csv` (`python -m src.Data.industry`,
+`python -m src.Data.industry_pool`) for the industry ROE, and `--long-short`
+leaves it long-only, as B&H state it.
+
+**The four matched rows re-solve; they never simulate.** Each reads the
+proposed model's saved simulated implied returns (`--dump-implied-return`, read
+back from `--replay-dir`) and solves again with a breadth floor
+`sum(w^2) <= 1/N`, where `N` is the comparator's effective N in the book it
+held at that date -- read date by date, never the full-sample average, which
+is known only at the end of the sample. `proposed_ex_post_msr_icc_n` swaps the
+objective as well: B&H's maximum-Sharpe rule on the simulation's mean and
+covariance, so it differs from B&H in its inputs and from
+`proposed_ex_post_icc_n` in its objective. Each needs its comparator's weights,
+from the same run or from `weights_<comparator>.csv` in `--out`, which is how
+they are added to a finished run:
+
+```
+python -m src.Empirical_Analysis.run --only proposed_historical_epo_n proposed_historical_ppp_n
+python -m src.Empirical_Analysis.run --rebuild
+```
+
+`--only` rewrites `summary.csv` and `monthly_returns.csv` with just the
+strategies it ran; `--rebuild` replays every `weights_*.csv` in `--out` and puts
+them all back.
 
 `equal_weight` is the benchmark `PPP` tilts away from, on the same universe, so
 PPP's contribution is readable as the gap between the two.
@@ -95,7 +124,7 @@ PPP's contribution is readable as the gap between the two.
 Everything outside the weighting rule has to be identical or the comparison
 measures the harness:
 
-- **Universe.** All six get `Data.exclusion.applicable_ticker`'s list at each
+- **Universe.** All of them get `Data.exclusion.applicable_ticker`'s list at each
   date, spelled out below. Each model then screens it further its own way, which
   is a property of the model and shows up in `avg_effective_n`, not equalised
   away.

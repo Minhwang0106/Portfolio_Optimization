@@ -1,6 +1,6 @@
 """Run every strategy over the sample period and write the comparison out.
 
-    python -m src.Empirical_Analysis.run                      # all six
+    python -m src.Empirical_Analysis.run                      # all ten
     python -m src.Empirical_Analysis.run --n-workers 5
     python -m src.Empirical_Analysis.run --only epo ppp --verbose
     python -m src.Empirical_Analysis.run --rebuild            # summary only
@@ -10,13 +10,16 @@ weights a finished run already wrote and recomputes everything downstream of
 them, in seconds rather than hours, without importing a single model. See
 `rebuild`.
 
-Six strategies, of which one pair is the same model:
+Ten strategies: six weighting rules, and four re-solves of the proposed model
+that hold it to a comparator's breadth or put its moments through B&H's rule.
 
 Every weighting rule here is long-only and fully invested by default, which is
 what makes the return columns comparable at all; `--long-short` restores the
 long-short forms the three papers state, and it reaches all of them -- `epo`,
 `ppp` and both `proposed_*` runs. It leaves `icc_mvo_ex_post` alone: Bielstein
-and Hanauer state a long-only book, so that is the one it runs.
+and Hanauer state a long-only book, so that is the one it runs. The four
+matched rows stay long-only too: the breadth they are held to is read off a
+long-only book.
 
 One EPO row, not two. Under the default it is the objective solved on the
 simplex, which is this repo's addition: eq. (16) is what Proposition 2 (p.13,
@@ -38,10 +41,11 @@ selected against whichever book is built, never across the two -- see
   Sharpe ratio on the Gebhardt-Lee-Swaminathan implied cost of capital plus
   rescaled momentum, Ledoit-Wolf covariance, long-only with a 5% cap.
   Quarterly by default, on the proposed model's calendar; `--icc-annual`
-  rebalances each June, as B&H do. **Lookahead; not a strategy.** Its three
-  explicit earnings years are the realised ones, so it is a point-estimate
-  benchmark under perfect earnings foresight -- the ablation arm to read
-  against `proposed_ex_post`, never against the tradeable rows.
+  rebalances each June, as B&H do. **Lookahead; not a strategy.** Its eleven
+  explicit earnings years are the realised ones -- the same future window
+  `proposed_ex_post` elicits its moments from -- so it is a point-estimate
+  benchmark under perfect earnings foresight, read against the ex post rows
+  and never against the tradeable ones.
 * `proposed_historical` -- the residual income model, quarterly, moments
   elicited from the training window. **This is the tradeable one.**
 * `proposed_ex_post` -- the same model with `ex_post=True`, i.e. moments
@@ -50,6 +54,20 @@ selected against whichever book is built, never across the two -- see
   machinery and the part that is not knowing the future moments -- the gap
   between it and `proposed_historical` is what perfect moment forecasting would
   be worth. Read it as a ceiling, never as a result.
+
+The four matched rows re-solve the proposed model from the implied-return dumps
+(`strategy.replay_weight`), on the quarterly calendar, and never simulate:
+
+* `proposed_historical_epo_n`, `proposed_historical_ppp_n` -- CRRA, held at
+  each rebalance date to EPO's or PPP's effective N at that date.
+* `proposed_ex_post_icc_n` -- CRRA, held to `icc_mvo_ex_post`'s effective N.
+* `proposed_ex_post_msr_icc_n` -- maximum Sharpe on the simulation's mean and
+  covariance, held to the same breadth: B&H's rule on this model's moments.
+
+Each needs its comparator's books, from this run or from `weights_<comparator>.csv`
+in `--out`, which is how the rows are added to a finished run:
+`--only proposed_historical_epo_n proposed_historical_ppp_n`, then `--rebuild`
+to put every saved strategy back in the summary.
 
 Each strategy is one job, and the jobs run in their own processes because the
 class-level panels (`RIM_PortOp.general_data`, `EPO.vol`, `PPP.characteristics`)
@@ -89,11 +107,23 @@ from .engine import backtest, quarter_ends, BacktestResult, WeightFn
 from .metrics import summarise, cumulative_wealth
 
 STRATEGIES: tuple[str, ...] = ('equal_weight', 'epo', 'ppp', 'icc_mvo_ex_post',
-                               'proposed_historical', 'proposed_ex_post')
+                               'proposed_historical', 'proposed_ex_post',
+                               'proposed_historical_epo_n',
+                               'proposed_historical_ppp_n',
+                               'proposed_ex_post_msr_icc_n',
+                               'proposed_ex_post_icc_n')
 
 # The two that call `RIM_PortOp`, and the elicitation window each one uses.
 _PROPOSED: dict[str, bool] = {'proposed_historical': False,
                               'proposed_ex_post': True}
+
+# The ones re-solved from the dumps: (dump variant, objective, comparator whose
+# effective N the book is held to at each date). See `strategy.replay_weight`.
+_REPLAY: dict[str, tuple[str, str, str]] = {
+    'proposed_historical_epo_n': ('historical', 'crra', 'epo'),
+    'proposed_historical_ppp_n': ('historical', 'crra', 'ppp'),
+    'proposed_ex_post_msr_icc_n': ('ex_post', 'max_sharpe', 'icc_mvo_ex_post'),
+    'proposed_ex_post_icc_n': ('ex_post', 'crra', 'icc_mvo_ex_post')}
 
 
 def _dated_seed (base: int, date: pd.Timestamp)-> int:
@@ -104,6 +134,68 @@ def _dated_seed (base: int, date: pd.Timestamp)-> int:
     is what numpy's legacy seeding accepts.
     """
     return (base*1_000_003+date.toordinal()) % (2**31-1)
+
+
+def effective_n_target (weights: pd.DataFrame, dates: list[pd.Timestamp]
+                        )-> pd.Series:
+    """A comparator's effective N in force at each date: what a matched book is held to.
+
+    Read off the comparator's own formation books -- the last one at or before
+    each date -- so the target at `t` uses nothing the comparator had not
+    already decided at `t`. Its full-sample average would be known only at the
+    end of the sample, which makes it lookahead in a tradeable row.
+
+    Args:
+        weights (pd.DataFrame): `BacktestResult.weights`, or a saved
+            `weights_<strategy>.csv` read with dates parsed: formation dates
+            down the rows, one column per ticker, NaN where not held.
+        dates (list[pd.Timestamp]): Dates to read the target at.
+
+    Returns:
+        pd.Series: `gross^2 / sum(w^2)` per date, on `dates`; NaN before the
+            comparator's first book.
+
+    Example:
+        >>> effective_n_target(results['epo'].weights, quarter_ends(dates))
+        date
+        2015-03-31    68.1...
+    """
+    held: pd.DataFrame = weights.sort_index().fillna(0.0)
+    breadth: pd.Series = held.abs().sum(axis=1)**2/(held**2).sum(axis=1)
+    return breadth.reindex(pd.DatetimeIndex(dates),
+                           method='ffill').rename('effective_n')
+
+
+def _breadth_targets (labels: list[str], collected: dict[str, BacktestResult],
+                      result_dir: Path|None, dates: list[pd.Timestamp]
+                      )-> dict[str, pd.Series]:
+    """Each matched row's effective-N floor per date, read off its comparator.
+
+    From this call's own run of the comparator where there is one, otherwise
+    from the `weights_<comparator>.csv` a finished run left in `result_dir` --
+    which is what lets the matched rows be added without re-running EPO, PPP or
+    B&H.
+
+    Raises:
+        FileNotFoundError: If a comparator is neither in this run nor saved in
+            `result_dir`.
+    """
+    targets: dict[str, pd.Series] = {}
+    for label in labels:
+        comparator: str = _REPLAY[label][2]
+        if comparator in collected:
+            weights: pd.DataFrame = collected[comparator].weights
+        else:
+            path: Path|None = (None if result_dir is None
+                               else Path(result_dir)/f'weights_{comparator}.csv')
+            if path is None or not path.exists():
+                raise FileNotFoundError(
+                    f'{label} is held to the breadth of {comparator}, which is '
+                    f'neither in this run nor saved in {result_dir}; run it '
+                    'first, or name it in `only` alongside')
+            weights = pd.read_csv(path, index_col=0, parse_dates=True)
+        targets[label] = effective_n_target(weights, dates)
+    return targets
 
 
 def _proposed_at (date: pd.Timestamp, tickers: list[str], base_seed: int,
@@ -203,6 +295,16 @@ def _build (label: str, params: dict[str, Any]
                         dump_dir=params['dump_dir']),
                 quarter_ends(dates) if params['proposed_quarterly'] else None)
 
+    if label in _REPLAY:
+        from .strategy import replay_weight
+        variant, objective, _ = _REPLAY[label]
+        # Quarterly whatever `proposed_quarterly` says: the dumps were written
+        # on that calendar and there is nothing to read on any other date.
+        return (partial(replay_weight, variant=variant, objective=objective,
+                        n_eff=params['targets'][label], rf=params['rf'],
+                        dump_dir=params['replay_dir']),
+                quarter_ends(params['dates']))
+
     raise ValueError(f'unknown strategy {label!r}; pick from {STRATEGIES}')
 
 
@@ -238,6 +340,23 @@ def _run_one (job: tuple[str, dict[str, Any]])-> tuple[str, BacktestResult]:
     return label, result
 
 
+def _map_jobs (jobs: list[tuple[str, dict[str, Any]]], n_workers: int
+               )-> dict[str, BacktestResult]:
+    """`_run_one` over `jobs`: in a pool, unless there is one job or one worker."""
+    collected: dict[str, BacktestResult] = {}
+    if not jobs:
+        return collected
+    if n_workers <= 1 or len(jobs) == 1:
+        for job in jobs:
+            label, res = _run_one(job)
+            collected[label] = res
+    else:
+        with ProcessPoolExecutor(max_workers=min(n_workers, len(jobs))) as ex:
+            for label, res in ex.map(_run_one, jobs):
+                collected[label] = res
+    return collected
+
+
 def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
              skip: tuple[str, ...] = (),
              n_workers: int = 5,
@@ -252,7 +371,8 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
              sr_benchmark: str|None = 'equal_weight', n_boot: int = 4999,
              sr_block: int|str = 5,
              result_dir: Path|None = RAW_BACKTEST_DIR,
-             dump_dir: Path|None = None
+             dump_dir: Path|None = None,
+             replay_dir: Path = IMPLIED_RETURN_DIR
              )-> tuple[dict[str, BacktestResult], pd.DataFrame]:
     """Backtest every strategy on one universe and one calendar, in parallel.
 
@@ -341,7 +461,14 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
             Defaults to False.
         result_dir (Path | None): Where to write the CSVs. None writes nothing
             and only returns, which is what a notebook wants. Defaults to
-            `constant.RAW_BACKTEST_DIR`.
+            `constant.RAW_BACKTEST_DIR`. Also where a matched row looks for its
+            comparator's `weights_<comparator>.csv` when the comparator is not
+            in this run.
+        dump_dir (Path | None): Write the proposed model's simulated implied
+            returns here, one file per formation date per variant. Defaults to
+            None, i.e. no files.
+        replay_dir (Path): Where the matched rows read those files back from.
+            Defaults to `constant.IMPLIED_RETURN_DIR`.
 
     Returns:
         tuple[dict[str, BacktestResult], pd.DataFrame]: The per-strategy runs
@@ -351,6 +478,8 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
     Raises:
         ValueError: If nothing is left to run, or if `only`/`skip` names a
             strategy that does not exist.
+        FileNotFoundError: If a matched row's comparator is neither in this run
+            nor saved in `result_dir`.
 
     Note:
         `proposed_ex_post` is a lookahead diagnostic, not a strategy -- its
@@ -393,19 +522,19 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
         'icc_cap': icc_cap, 'icc_annual': icc_annual, 'n_samples': n_samples,
         'n_lags': n_lags, 'common_theta': common_theta,
         'long_only': long_only, 'seed': seed, 'verbose': verbose,
-        'dump_dir': dump_dir,
+        'dump_dir': dump_dir, 'replay_dir': replay_dir,
     }
-    jobs: list[tuple[str, dict[str, Any]]] = [(s, params) for s in wanted]
-
-    collected: dict[str, BacktestResult] = {}
-    if n_workers <= 1 or len(jobs) == 1:
-        for job in jobs:
-            label, res = _run_one(job)
-            collected[label] = res
-    else:
-        with ProcessPoolExecutor(max_workers=min(n_workers, len(jobs))) as ex:
-            for label, res in ex.map(_run_one, jobs):
-                collected[label] = res
+    replay: list[str] = [s for s in wanted if s in _REPLAY]
+    collected: dict[str, BacktestResult] = _map_jobs(
+        [(s, params) for s in wanted if s not in _REPLAY], n_workers)
+    if replay:
+        # Second, because each matched row is held to a comparator's breadth at
+        # every date, and that comparator may be one this call has just run.
+        matched: dict[str, Any] = {
+            **params, 'rf': risk_free(),
+            'targets': _breadth_targets(replay, collected, result_dir,
+                                        params['dates'])}
+        collected.update(_map_jobs([(s, matched) for s in replay], n_workers))
 
     # `STRATEGIES` order, not completion order -- a pool returns whenever each
     # job finishes, and a summary table whose columns reorder between runs is
@@ -523,7 +652,14 @@ def rebuild (result_dir: Path = RAW_BACKTEST_DIR, dates=testing_period,
         FileNotFoundError: If no `weights_*.csv` is there to replay.
         ValueError: If `verify` and the replay does not reproduce the saved
             returns -- which means `dates` or `cost_bps` is not what the run
-            used, and every number downstream would be quietly wrong.
+            used, or the price panel has been refetched since, and every number
+            downstream would be quietly wrong.
+
+    Note:
+        Each saved book is replayed exactly as it was held. It is not screened
+        again against the current `applicable_ticker.csv`, which changes
+        whenever the panels are rebuilt; a universe that has moved on since the
+        run changes nothing here, since the books already record who was held.
 
     Example:
         >>> _, table = rebuild()
@@ -562,10 +698,14 @@ def rebuild (result_dir: Path = RAW_BACKTEST_DIR, dates=testing_period,
         weights: pd.DataFrame = pd.read_csv(files[label], index_col=0,
                                             parse_dates=True)
 
+        # The saved book exactly as it was held, not screened again against
+        # today's universe. `applicable_ticker.csv` is rebuilt whenever the
+        # panels are, and dropping a name it no longer lists leaves the book
+        # short of fully invested instead of reproducing it -- which is what
+        # the refetch of 2026-09-11 did to VZ at 51 dates.
         def rule (date: pd.Timestamp, tickers: list[str],
                   _w: pd.DataFrame = weights)-> pd.Series:
-            row: pd.Series = _w.loc[date].dropna()
-            return row[row.index.intersection(tickers)]
+            return _w.loc[date].dropna()
 
         res: BacktestResult = backtest(
             rule, formation, return_df, uni, rebalance=list(weights.index),
@@ -579,8 +719,9 @@ def rebuild (result_dir: Path = RAW_BACKTEST_DIR, dates=testing_period,
                 raise ValueError(
                     f'{label}: replay does not reproduce the saved run '
                     f'(max return gap {gap:.2e}). `dates` or `cost_bps` is not '
-                    f'what produced {saved.name}; pass verify=False only if '
-                    f'the returns are meant to change.')
+                    f'what produced {saved.name}, or the price panel has been '
+                    f'refetched since; pass verify=False only if the returns '
+                    f'are meant to change.')
         results[label] = res
 
     rf: pd.Series = risk_free()
@@ -651,6 +792,10 @@ def _cli ()-> argparse.Namespace:
                              f'Defaults to {IMPLIED_RETURN_DIR} when the flag '
                              'is given without a path. ~30 MB per file, '
                              '~2.7 GB over a full run.')
+    parser.add_argument('--replay-dir', type=Path, default=IMPLIED_RETURN_DIR,
+                        metavar='DIR',
+                        help='where the matched rows read those files back '
+                             f'from (default {IMPLIED_RETURN_DIR})')
     return parser.parse_args()
 
 
@@ -695,7 +840,7 @@ if __name__ == '__main__':
         long_only=not args.long_short, seed=args.seed, verbose=args.verbose,
         sr_benchmark=sr_benchmark_arg, n_boot=args.n_boot,
         sr_block=sr_block_arg, result_dir=args.out,
-        dump_dir=args.dump_implied_return)
+        dump_dir=args.dump_implied_return, replay_dir=args.replay_dir)
     with pd.option_context('display.width', 160,
                            'display.float_format', '{:,.4f}'.format):
         print()

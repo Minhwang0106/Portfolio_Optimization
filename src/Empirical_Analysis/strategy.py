@@ -15,17 +15,25 @@ by ticker. None of the three models offers that:
 The adapters here put all three on the Series convention and nothing else. They
 do not change any model's weighting rule; the one thing they do decide is EPO's
 scale, which the model genuinely leaves open -- see `normalise`.
+
+`replay_weight` is the exception, and says so: it re-solves the proposed model
+from a saved simulation under a breadth floor or a different objective, which is
+how the matched-breadth rows are built without simulating again.
 """
 import warnings
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from constant import icc_weight_cap
+from constant import icc_weight_cap, IMPLIED_RETURN_DIR
 from ..EPO.model import EPO
 from ..PPP.model import PPP
 from ..ICC_MVO.model import Icc_Mvo
 from ..Proposed_Model.model import RIM_PortOp
-from ..Proposed_Model.utils.port_optimize import port_weight
+from ..Proposed_Model.utils.port_optimize import port_weight, moment_port_weight
+
+# What `replay_weight` can re-solve a dump under.
+REPLAY_OBJECTIVES: tuple[str, ...] = ('crra', 'max_sharpe')
+MONTHS_PER_YEAR: int = 12
 
 # Below this the normalising denominator is treated as zero rather than divided
 # by. A gross exposure this small means the solver returned essentially no
@@ -197,10 +205,12 @@ def icc_mvo_weight (date: pd.Timestamp, tickers: list[str],
             optimiser left under `constant.icc_weight_floor` are exactly 0.
 
     Note:
-        **Lookahead.** The three explicit earnings years the implied cost of
-        capital is solved on are the *realised* ones, so the book formed at `t`
-        has seen EPS through `t + 3` years. It is a benchmark under perfect
-        earnings foresight, not a strategy -- see `Icc_Mvo`.
+        **Lookahead.** The `constant.icc_explicit_years` (11) explicit earnings
+        years the implied cost of capital is solved on are the *realised* ones,
+        so the book formed at `t` has seen EPS as far ahead as the panel runs --
+        the same window `proposed_ex_post` elicits its moments from. It is a
+        benchmark under perfect earnings foresight, not a strategy -- see
+        `Icc_Mvo`.
 
     Example:
         >>> Icc_Mvo.Config()
@@ -237,8 +247,9 @@ def proposed_weight (date: pd.Timestamp, tickers: list[str],
             running `constant.n_quarter_ahead` quarters past the formation date,
             and under `ex_post=True` the mean and variance each characteristic
             is simulated around come from that window -- so the portfolio formed
-            at `t` has already seen the accounting figures through `t + 3
-            years`. Its purpose is to decompose the model's error: run against
+            at `t` has already seen the accounting figures as far ahead as the
+            panel runs: about 45 quarters at the first formation date, 2 at the
+            last. Its purpose is to decompose the model's error: run against
             `ex_post=False` it separates how much of the shortfall is the
             simulation machinery and how much is simply not knowing the future
             moments. Read it as an upper bound on what perfect moment
@@ -299,6 +310,78 @@ def proposed_weight (date: pd.Timestamp, tickers: list[str],
     # read a transposed one as a universe of 10,000 names.
     return_df.T.to_csv(path, index_label='simulation')
     return port_weight(return_df, long_only=long_only).astype(float)
+
+
+def replay_weight (date: pd.Timestamp, tickers: list[str], variant: str,
+                   objective: str = 'crra', n_eff: pd.Series|None = None,
+                   rf: pd.Series|None = None,
+                   dump_dir: Path = IMPLIED_RETURN_DIR)-> pd.Series:
+    """The proposed model's weights, re-solved from a saved simulation.
+
+    `proposed_weight(dump_dir=...)` writes each formation date's simulated
+    implied returns; this reads them back and solves again under a breadth
+    floor or a different objective. Rows built this way share their draws with
+    each other and with the run that wrote the dump, so they differ in nothing
+    but the constraint or the objective. No copula is fitted and nothing is
+    simulated -- seconds a date rather than minutes.
+
+    Args:
+        date (pd.Timestamp): Formation date. A dump must exist for it.
+        tickers (list[str]): Unused. The dump already holds the universe the
+            model screened at `date`, and screening it again here would change
+            the problem the rows are meant to share. Present for the engine's
+            signature.
+        variant (str): `'historical'` or `'ex_post'`, the dump's prefix.
+        objective (str): `'crra'` solves `port_weight`, the model as specified;
+            `'max_sharpe'` solves `moment_port_weight`, B&H's rule on the
+            simulation's mean and covariance. Defaults to `'crra'`.
+        n_eff (pd.Series | None): Effective-N floor per formation date, from
+            `run.effective_n_target`. None leaves breadth free. Defaults to
+            None.
+        rf (pd.Series | None): Monthly risk-free rate from `data.risk_free`.
+            Under `'max_sharpe'` the formation month's rate is compounded to a
+            year and subtracted from the annual implied returns, as `Icc_Mvo`
+            does for B&H. Required there, unused otherwise. Defaults to None.
+        dump_dir (Path): Where the dumps are. Defaults to
+            `constant.IMPLIED_RETURN_DIR`.
+
+    Returns:
+        pd.Series: One weight per ticker in the dump, summing to one.
+            Long-only whatever the run's `long_only` says: the floor is defined
+            on a long-only book, and the comparators it is read off are one.
+
+    Raises:
+        FileNotFoundError: If there is no dump for `date`.
+        ValueError: If `objective` is unknown, if `n_eff` holds no target for
+            `date` (the comparator had not formed a book yet), if
+            `'max_sharpe'` is asked for without `rf`, or if the solve fails.
+            `engine.backtest` records any of these and holds the previous book.
+
+    Example:
+        >>> w = replay_weight(pd.Timestamp('2020-06-30'), [], 'historical',
+        ...                   n_eff=pd.Series({pd.Timestamp('2020-06-30'): 70.0}))
+        >>> round(1/float((w**2).sum()), 1) >= 70.0
+        True
+    """
+    if objective not in REPLAY_OBJECTIVES:
+        raise ValueError(f'objective must be one of {REPLAY_OBJECTIVES}; '
+                         f'got {objective!r}')
+    date = pd.Timestamp(date)
+    # (simulation, ticker) on disk; both solvers read (ticker, simulation).
+    draws: pd.DataFrame = pd.read_csv(
+        Path(dump_dir)/f'{variant}_{date.date()}.csv', index_col=0)
+    target: float|None = None
+    if n_eff is not None:
+        target = float(n_eff.get(date, np.nan))
+        if not np.isfinite(target):
+            raise ValueError(f'{date.date()}: no effective-N target -- the '
+                             'comparator had not formed a book yet')
+    if objective == 'crra':
+        return port_weight(draws.T, n_eff=target).astype(float)
+    if rf is None:
+        raise ValueError("objective 'max_sharpe' needs the risk-free rate")
+    rf_year: float = (1.0+float(rf.loc[:date].iloc[-1]))**MONTHS_PER_YEAR-1.0
+    return moment_port_weight(draws.T, rf=rf_year, n_eff=target).astype(float)
 
 
 def equal_weight (date: pd.Timestamp, tickers: list[str])-> pd.Series:

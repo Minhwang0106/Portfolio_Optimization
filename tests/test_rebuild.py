@@ -69,6 +69,22 @@ def test_rebuild_reproduces_the_saved_returns_exactly(saved_run, dates):
     pd.testing.assert_frame_equal(before, after)
 
 
+def test_rebuild_replays_the_book_held_after_the_universe_moves_on(
+        saved_run, dates, monkeypatch):
+    """The universe file is rebuilt with the panels; the saved books are not.
+
+    A name dropped from it after the run -- VZ, in the refetch of 2026-09-11 --
+    was still held, so the replay has to keep it or the book stops summing to
+    one and the returns stop matching.
+    """
+    import src.Empirical_Analysis.run as run_mod
+    out, original = saved_run
+    monkeypatch.setattr(run_mod, 'universe',
+                        lambda: {d: ['AAA', 'BBB'] for d in dates})
+    _, rebuilt = rebuild(result_dir=out, dates=dates, sr_benchmark=None)
+    pd.testing.assert_frame_equal(rebuilt, original)
+
+
 def test_rebuild_raises_when_the_cost_no_longer_matches_the_run(saved_run,
                                                                dates):
     """Silently re-costing a run would make every number downstream wrong."""
