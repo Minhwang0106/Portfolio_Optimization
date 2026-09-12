@@ -1,0 +1,46 @@
+% Requires: \usepackage{booktabs} \usepackage{threeparttable}
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{Ex post: Bielstein and Hanauer against the proposed model.}
+\label{tab:ex_post}
+\begin{threeparttable}
+\begin{tabular}{lrrrr}
+\toprule
+ & {B\&H} & {Proposed, max Sharpe} & {Proposed, CRRA} & {Proposed, CRRA, unconstrained} \\
+\midrule
+\multicolumn{5}{l}{\textit{Panel A: Performance}} \\
+Annualised return (\%) & 16.62 & 15.07 & 26.18 & 41.20 \\
+Annualised volatility (\%) & 14.23 & 14.64 & 17.30 & 29.28 \\
+Maximum drawdown (\%) & 25.85 & 21.67 & 19.53 & 26.29 \\
+Sharpe ratio & 1.02 & 0.90 & 1.33 & 1.27 \\
+CRRA certainty equivalent (\%) & 11.56 & 10.18 & 18.92 & 21.30 \\
+Annualised turnover & 2.95 & 1.99 & 1.31 & 3.82 \\
+Average effective N & 22.01 & 33.63 & 21.87 & 1.94 \\
+\addlinespace
+\midrule
+ &  & {Proposed, max Sharpe} & {Proposed, CRRA} & {Proposed, CRRA, unconstrained} \\
+\midrule
+\multicolumn{5}{l}{\textit{Panel B: Difference from B\&H}} \\
+Mean return (pp) &  & -1.32 & 8.46$^{***}$ & 22.54$^{***}$ \\
+\quad $t$-statistic &  & -0.53 & 2.89 & 3.12 \\
+\quad Bootstrap $p$-value &  & [0.714] & [0.001] & [0.000] \\
+Sharpe ratio &  & -0.12 & 0.31$^{*}$ & 0.25 \\
+\quad $t$-statistic &  & -0.56 & 1.38 & 0.79 \\
+\quad Bootstrap $p$-value &  & [0.684] & [0.090] & [0.207] \\
+CRRA certainty equivalent (pp) &  & -1.38 & 7.36$^{**}$ & 9.74 \\
+\quad $t$-statistic &  & -0.43 & 1.87 & 1.21 \\
+\quad Bootstrap $p$-value &  & [0.656] & [0.027] & [0.107] \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[flushleft]\footnotesize
+\item Sample 2015-02 to 2026-01 (132 monthly observations). Returns are net of 10~bps of one-way transaction cost. Every row is ex post: it is formed with accounting data realised after the formation date, so it is a benchmark under perfect foresight and not an implementable strategy.
+\item B\&H is the portfolio of Bielstein and Hanauer (2019): maximum Sharpe ratio on the implied cost of capital of Gebhardt, Lee and Swaminathan (2001) plus rescaled momentum, with a Ledoit--Wolf covariance and a 5\% cap per name. Its explicit earnings years are the realised ones over the same future window the proposed model's moments are drawn from.
+\item The proposed rows are solved on one set of simulated implied returns. Max Sharpe uses only their mean and covariance; CRRA uses the whole distribution. Both are held, at each rebalance date, to B\&H's effective number of names at that date; the unconstrained row is the model as specified.
+\item Panel B reports each proposed row minus B\&H. All tests are one-sided and paired, $H_1$: the row exceeds its benchmark. Each is a delta method over sample moments with a prewhitened quadratic-spectral HAC long-run covariance (Andrews, 1991; Andrews and Monahan, 1992); the reported $p$-value is from a studentized circular block bootstrap with block length 5 and 4999 resamples (Ledoit and Wolf, 2008).
+\item Mean return and certainty equivalent differences are annualised, in percentage points; the Sharpe ratio difference is annualised, in ratio units. The certainty equivalent is the annualised certain return an investor with CRRA utility at $\gamma=5$ would accept in place of the realised series. Turnover is the annualised sum of absolute weight changes. Effective N is $1/\sum_i w_i^2$ averaged over months: the number of equally weighted holdings that would be as concentrated as the book.
+\item Panel B carries 9 tests; the notes on multiple testing in the text apply.
+\item $^{***}$, $^{**}$ and $^{*}$ denote significance at the 1\%, 5\% and 10\% levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
