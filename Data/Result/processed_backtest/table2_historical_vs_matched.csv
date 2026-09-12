@@ -1,0 +1,10 @@
+,,,"Proposed, EPO $N$ $-$ EPO","Proposed, PPP $N$ $-$ PPP"
+Panel C: Difference from the matched comparator,mean_return,Mean return (pp),0.03987470733938371,0.02027263589870639
+Panel C: Difference from the matched comparator,mean_return,\quad $t$-statistic,1.6454382899442825,0.8919412560311853
+Panel C: Difference from the matched comparator,mean_return,\quad Bootstrap $p$-value,0.0344,0.1672
+Panel C: Difference from the matched comparator,sharpe,Sharpe ratio,0.18705644364781104,0.20398128963613035
+Panel C: Difference from the matched comparator,sharpe,\quad $t$-statistic,1.2221492905320017,1.423929235357392
+Panel C: Difference from the matched comparator,sharpe,\quad Bootstrap $p$-value,0.0938,0.0762
+Panel C: Difference from the matched comparator,crra_ce,CRRA certainty equivalent (pp),0.02700782248853595,0.05407678152166784
+Panel C: Difference from the matched comparator,crra_ce,\quad $t$-statistic,1.0798035330981852,1.3945357892915216
+Panel C: Difference from the matched comparator,crra_ce,\quad Bootstrap $p$-value,0.118,0.047

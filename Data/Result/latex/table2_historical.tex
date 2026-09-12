@@ -1,0 +1,59 @@
+% Requires: \usepackage{booktabs} \usepackage{threeparttable}
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{Historical: the proposed model against equal weight, EPO and PPP.}
+\label{tab:historical}
+\begin{threeparttable}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & {Equal-weight} & {EPO} & {PPP} & {Proposed, EPO $N$} & {Proposed, PPP $N$} & {Proposed, unconstrained} \\
+\midrule
+\multicolumn{7}{l}{\textit{Panel A: Performance}} \\
+Annualised return (\%) & 11.49 & 8.05 & 9.88 & 12.08 & 12.62 & 9.31 \\
+Annualised volatility (\%) & 16.41 & 13.55 & 18.30 & 15.65 & 15.90 & 25.91 \\
+Maximum drawdown (\%) & 27.19 & 23.48 & 34.61 & 24.93 & 23.95 & 26.97 \\
+Sharpe ratio & 0.63 & 0.50 & 0.51 & 0.69 & 0.71 & 0.40 \\
+CRRA certainty equivalent (\%) & 5.32 & 4.03 & 1.58 & 6.74 & 6.99 & -3.91 \\
+Annualised turnover & 0.85 & 4.76 & 5.22 & 1.62 & 1.18 & 3.20 \\
+Average effective N & 281.69 & 72.58 & 80.14 & 68.39 & 80.12 & 1.41 \\
+\addlinespace
+\midrule
+ &  & {EPO} & {PPP} & {Proposed, EPO $N$} & {Proposed, PPP $N$} & {Proposed, unconstrained} \\
+\midrule
+\multicolumn{7}{l}{\textit{Panel B: Difference from equal weight}} \\
+Mean return (pp) &  & -3.60 & -1.10 & 0.39 & 0.92 & -0.07 \\
+\quad $t$-statistic &  & -1.43 & -0.62 & 0.24 & 0.79 & -0.01 \\
+\quad Bootstrap $p$-value &  & [0.957] & [0.739] & [0.412] & [0.225] & [0.500] \\
+Sharpe ratio &  & -0.13 & -0.13 & 0.06 & 0.08 & -0.23 \\
+\quad $t$-statistic &  & -0.84 & -1.27 & 0.45 & 0.97 & -0.91 \\
+\quad Bootstrap $p$-value &  & [0.813] & [0.894] & [0.317] & [0.170] & [0.800] \\
+CRRA certainty equivalent (pp) &  & -1.29 & -3.74 & 1.41 & 1.67 & -9.23 \\
+\quad $t$-statistic &  & -0.50 & -1.44 & 0.56 & 0.96 & -1.62 \\
+\quad Bootstrap $p$-value &  & [0.705] & [0.945] & [0.263] & [0.141] & [0.930] \\
+\addlinespace
+\midrule
+ &  &  &  &  & {Proposed, EPO $N$ $-$ EPO} & {Proposed, PPP $N$ $-$ PPP} \\
+\midrule
+\multicolumn{7}{l}{\textit{Panel C: Difference from the matched comparator}} \\
+Mean return (pp) &  &  &  &  & 3.99$^{**}$ & 2.03 \\
+\quad $t$-statistic &  &  &  &  & 1.65 & 0.89 \\
+\quad Bootstrap $p$-value &  &  &  &  & [0.034] & [0.167] \\
+Sharpe ratio &  &  &  &  & 0.19$^{*}$ & 0.20$^{*}$ \\
+\quad $t$-statistic &  &  &  &  & 1.22 & 1.42 \\
+\quad Bootstrap $p$-value &  &  &  &  & [0.094] & [0.076] \\
+CRRA certainty equivalent (pp) &  &  &  &  & 2.70 & 5.41$^{**}$ \\
+\quad $t$-statistic &  &  &  &  & 1.08 & 1.39 \\
+\quad Bootstrap $p$-value &  &  &  &  & [0.118] & [0.047] \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[flushleft]\footnotesize
+\item Sample 2015-02 to 2026-01 (132 monthly observations). Returns are net of 10~bps of one-way transaction cost. The proposed model elicits its moments from the training window only, so every row is implementable.
+\item The EPO $N$ and PPP $N$ rows hold the proposed model, at each rebalance date, to that comparator's effective number of names at that date; the unconstrained row is the model as specified.
+\item Panel B reports each strategy minus equal weight; Panel C each matched row minus the comparator whose breadth it holds. All tests are one-sided and paired, $H_1$: the row exceeds its benchmark. Each is a delta method over sample moments with a prewhitened quadratic-spectral HAC long-run covariance (Andrews, 1991; Andrews and Monahan, 1992); the reported $p$-value is from a studentized circular block bootstrap with block length 5 and 4999 resamples (Ledoit and Wolf, 2008).
+\item Mean return and certainty equivalent differences are annualised, in percentage points; the Sharpe ratio difference is annualised, in ratio units. The certainty equivalent is the annualised certain return an investor with CRRA utility at $\gamma=5$ would accept in place of the realised series. Turnover is the annualised sum of absolute weight changes. Effective N is $1/\sum_i w_i^2$ averaged over months: the number of equally weighted holdings that would be as concentrated as the book.
+\item Panels B and C carry 21 tests; the notes on multiple testing in the text apply.
+\item $^{***}$, $^{**}$ and $^{*}$ denote significance at the 1\%, 5\% and 10\% levels.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
