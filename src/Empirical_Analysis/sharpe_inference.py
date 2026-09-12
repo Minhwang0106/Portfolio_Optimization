@@ -87,6 +87,7 @@ _MIN_BANDWIDTH: float = 1e-8
 # than on zero and has to be caught relative to the second moment.
 _VAR_TOL: float = 1e-12
 BLOCK_GRID: tuple[int, ...] = (1, 2, 4, 6, 8, 10)  # Section 3.2.2's own grid.
+_ALTERNATIVE: tuple[str, ...] = ('greater', 'less', 'two-sided')
 
 
 def _qs_kernel (x: np.ndarray)-> np.ndarray:
@@ -263,15 +264,29 @@ def _psi_boot (y: np.ndarray, block: int)-> np.ndarray:
     return np.einsum('kja,kjb->kab', zeta, zeta)/n_full
 
 
+def _tail_count (stat: float, centred: np.ndarray, alternative: str)-> int:
+    """How many resampled statistics are at least as extreme as `stat`."""
+    if alternative == 'two-sided':
+        return int((np.abs(centred) >= abs(stat)).sum())
+    if alternative == 'greater':
+        return int((centred >= stat).sum())
+    return int((centred <= stat).sum())
+
+
 def _bootstrap_pvalue (x: np.ndarray, b: np.ndarray, delta: float,
                        se_hac: float, block: int, n_boot: int,
-                       rng: np.random.Generator, null: float = 0.0)-> float:
+                       rng: np.random.Generator, null: float = 0.0,
+                       alternative: str = 'two-sided')-> float:
     """Studentized bootstrap p-value, Eq. (9).
 
     `delta` is the point estimate and `null` the value under test. They are
     separate because the resamples are always centred at the point estimate --
     that is what makes the statistic a pivot -- while the numerator measures the
     distance from the null. `calibrate_block_size` needs a non-zero `null`.
+
+    Eq. (9) is the two-sided case, `|d*| >= |d|`. The one-sided cases count one
+    tail of the signed pivot `(Delta* - Delta)/s(Delta*)` instead, which is not
+    half the two-sided count unless the bootstrap distribution is symmetric.
     """
     n_obs: int = len(x)
     v_hat: np.ndarray = _moments(x, b)
@@ -305,20 +320,23 @@ def _bootstrap_pvalue (x: np.ndarray, b: np.ndarray, delta: float,
     se_star: np.ndarray = np.sqrt(np.maximum(quad, 0.0)/n_obs)
 
     ok = ok&(se_star > 0)
-    stat: float = abs(delta-null)/se_hac if se_hac > 0 else float('inf')
-    centred: np.ndarray = np.abs(delta_star[ok]-delta)/se_star[ok]
-    return (float((centred >= stat).sum())+1)/(int(ok.sum())+1)
+    stat: float = ((delta-null)/se_hac if se_hac > 0
+                   else math.copysign(math.inf, delta-null))
+    centred: np.ndarray = (delta_star[ok]-delta)/se_star[ok]
+    return (_tail_count(stat, centred, alternative)+1)/(int(ok.sum())+1)
 
 
 def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
                             block_size: int|str = 5, n_boot: int = 4999,
                             prewhite: bool = True, seed: int = 0,
                             periods_per_year: int = 12,
-                            n_pseudo: int = 1000)-> pd.Series:
+                            n_pseudo: int = 1000,
+                            alternative: str = 'two-sided')-> pd.Series:
     """Test that two Sharpe ratios are equal, robustly. Ledoit-Wolf (2008).
 
-    Both p-values test `H0: SR_x - SR_b = 0` two-sided. Read `pval_boot`; see the
-    module docstring for why `pval_hac` is reported but is the weaker of the two.
+    Both p-values test `H0: SR_x - SR_b = 0`, two-sided by default. Read
+    `pval_boot`; see the module docstring for why `pval_hac` is reported but is
+    the weaker of the two.
 
     Args:
         excess_x (pd.Series): The strategy's excess returns, already net of the
@@ -339,6 +357,11 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
             `sqrt`. The p-values are invariant to it. Defaults to 12.
         n_pseudo (int): Pseudo sequences when `block_size='calibrate'`, ignored
             otherwise. Defaults to 1000, the paper's floor for real data.
+        alternative (str): `'two-sided'`, the paper's test and the default;
+            `'greater'` tests `H0: SR_x <= SR_b` against `H1: SR_x > SR_b`,
+            and `'less'` reverses it. A one-sided test has to be chosen before
+            the sign of the difference is seen. The block size calibration, when
+            asked for, is two-sided whatever this says.
 
     Returns:
         pd.Series: `sr_diff` (annualised `SR_x - SR_b`), `sr_diff_se` (its
@@ -346,8 +369,9 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
             `n_month` used. Plus `block_size` when it was calibrated.
 
     Raises:
-        ValueError: If fewer than `_N_MOMENT+2` months overlap, or if either
-            series has zero variance over them.
+        ValueError: If `alternative` is not one of `'greater'`, `'less'`,
+            `'two-sided'`, if fewer than `_N_MOMENT+2` months overlap, or if
+            either series has zero variance over them.
 
     Example:
         >>> sharpe_difference_test(epo_excess, ew_excess)[['sr_diff', 'pval_boot']]
@@ -355,6 +379,9 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
         pval_boot    0.8836
         dtype: float64
     """
+    if alternative not in _ALTERNATIVE:
+        raise ValueError(f'alternative must be one of {_ALTERNATIVE}; '
+                         f'got {alternative!r}')
     joined: pd.DataFrame = pd.concat(
         {'x': excess_x, 'b': excess_b}, axis=1).dropna()
     if len(joined) < _N_MOMENT+2:
@@ -372,10 +399,17 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
     delta: float = _delta(v_hat)
     psi: np.ndarray = _psi_hac(_centred(x, b, v_hat), prewhite=prewhite)
     se_hac: float = _standard_error(v_hat, psi, n_obs)
-    # 2*Phi(-|d|) written with erfc, which is what Phi is implemented from
-    # anyway and saves a scipy import for one scalar.
-    pval_hac: float = (math.erfc(abs(delta)/se_hac/math.sqrt(2))
-                       if se_hac > 0 else float('nan'))
+    # 2*Phi(-|z|) and Phi(-z) written with erfc, which is what Phi is
+    # implemented from anyway and saves a scipy import for one scalar.
+    pval_hac: float = float('nan')
+    if se_hac > 0:
+        z: float = delta/se_hac
+        if alternative == 'two-sided':
+            pval_hac = math.erfc(abs(z)/math.sqrt(2))
+        elif alternative == 'greater':
+            pval_hac = 0.5*math.erfc(z/math.sqrt(2))
+        else:
+            pval_hac = 0.5*math.erfc(-z/math.sqrt(2))
 
     calibrated: bool = isinstance(block_size, str)
     if calibrated:
@@ -391,7 +425,8 @@ def sharpe_difference_test (excess_x: pd.Series, excess_b: pd.Series,
             raise ValueError(f'block_size must be in [1, {n_obs}]; '
                              f'got {block_size}')
         pval_boot = _bootstrap_pvalue(x, b, delta, se_hac, block_size, n_boot,
-                                      np.random.default_rng(seed))
+                                      np.random.default_rng(seed),
+                                      alternative=alternative)
 
     scale: float = math.sqrt(periods_per_year)
     out: pd.Series = pd.Series(

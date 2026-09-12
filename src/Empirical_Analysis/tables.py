@@ -15,14 +15,26 @@ published table is the kind of error that survives review.
 
 The three tables:
 
-* **Table 1** -- performance, no inference. What each strategy did.
-* **Table 2** -- the three difference tests against equal weight, ordered mean
-  return, then Sharpe, then certainty equivalent. That order is deliberate: it
-  runs from the statistic that ignores risk entirely to the one that penalises
-  it hardest, and reading down the panels is reading the significance decay
-  that the volatility gap produces. The accompanying text has to say so.
-* **Table 3** -- the thought experiment of `experiment_thought`, which is what
-  makes Table 2's pattern interpretable rather than merely awkward.
+* **Table 1** -- ex post. Bielstein and Hanauer's portfolio against the proposed
+  model three ways: maximum Sharpe on its simulated moments and CRRA over the
+  whole simulation, both held to B&H's breadth, then CRRA unconstrained. Each
+  row differs from the one before it in one thing -- inputs, then objective,
+  then breadth. Panel A the levels, Panel B each proposed row minus B&H.
+* **Table 2** -- historical, i.e. implementable. Equal weight, EPO, PPP, and the
+  proposed model at EPO's breadth, at PPP's, and unconstrained. Panel A the
+  levels, Panel B every row minus equal weight, Panel C each matched row minus
+  the comparator whose breadth it holds.
+* **Table 3** -- the thought experiment of `experiment_thought`, unchanged.
+
+Every difference test in Tables 1 and 2 is one-sided, `H1`: the row beats its
+benchmark -- the question the paper puts to each comparison, fixed before the
+numbers. Within a panel the statistics run mean return, then Sharpe ratio, then
+certainty equivalent: from the one that ignores risk entirely to the one that
+penalises it hardest, so reading down a panel is reading the significance decay
+a volatility gap produces.
+
+Each table is built from whichever of its strategies `summary.csv` holds, and
+Table 1 is skipped, with a warning, until `icc_mvo_ex_post` has been run.
 
 LaTeX conventions. Output uses `booktabs` and `threeparttable` and nothing
 else, so it compiles in any Overleaf project without a preamble hunt. Columns
@@ -35,6 +47,7 @@ Run:
     python -m src.Empirical_Analysis.tables --n-sim 1000   # faster Table 3
 """
 import argparse
+import warnings
 from pathlib import Path
 import pandas as pd
 
@@ -45,23 +58,40 @@ from .ce_inference import ce_difference_test
 from .mean_inference import mean_difference_test
 from . import experiment_thought as thought
 
-BENCHMARK: str = 'equal_weight'
-# Benchmark first, then the models from the literature, then ours -- the bar,
-# what clears it, and what this paper proposes. `icc_mvo_ex_post` is from the
-# literature but sits against the proposed rows: it is the ablation's
-# point-estimate arm, built on realised earnings, and is read against
-# `proposed_ex_post` rather than against the tradeable books.
-STRATEGY_ORDER: tuple[str, ...] = ('equal_weight', 'epo', 'ppp',
-                                   'icc_mvo_ex_post', 'proposed_historical',
-                                   'proposed_ex_post')
-STRATEGY_LABEL: dict[str, str] = {
-    'equal_weight': 'Equal-weight', 'epo': 'EPO', 'ppp': 'PPP',
-    'icc_mvo_ex_post': 'ICC-MVO (ex post)',
-    'proposed_historical': 'Proposed (hist.)',
-    'proposed_ex_post': 'Proposed (ex post)'}
+# Table 1, ex post: B&H first, then the proposed model's rows, each differing
+# from the one before in one thing -- inputs, then objective, then breadth.
+EX_POST_BENCHMARK: str = 'icc_mvo_ex_post'
+EX_POST_ORDER: tuple[str, ...] = ('icc_mvo_ex_post',
+                                  'proposed_ex_post_msr_icc_n',
+                                  'proposed_ex_post_icc_n', 'proposed_ex_post')
+EX_POST_LABEL: dict[str, str] = {
+    'icc_mvo_ex_post': 'B&H',
+    'proposed_ex_post_msr_icc_n': 'Proposed, max Sharpe',
+    'proposed_ex_post_icc_n': 'Proposed, CRRA',
+    'proposed_ex_post': 'Proposed, CRRA, unconstrained'}
 
-# Everything from `metrics.SUMMARY_ROWS` except `sharpe_pval`, which moves to
-# Table 2 so that all the inference lives in one place.
+# Table 2, historical: the benchmark, the two models from the literature, then
+# the proposed model at each one's breadth and unconstrained.
+HISTORICAL_BENCHMARK: str = 'equal_weight'
+HISTORICAL_ORDER: tuple[str, ...] = ('equal_weight', 'epo', 'ppp',
+                                     'proposed_historical_epo_n',
+                                     'proposed_historical_ppp_n',
+                                     'proposed_historical')
+HISTORICAL_LABEL: dict[str, str] = {
+    'equal_weight': 'Equal-weight', 'epo': 'EPO', 'ppp': 'PPP',
+    'proposed_historical_epo_n': 'Proposed, EPO $N$',
+    'proposed_historical_ppp_n': 'Proposed, PPP $N$',
+    'proposed_historical': 'Proposed, unconstrained'}
+# Table 2's Panel C: each matched row against the comparator whose breadth it
+# holds -- the comparison the matching exists to make.
+MATCHED: tuple[tuple[str, str], ...] = (('proposed_historical_epo_n', 'epo'),
+                                        ('proposed_historical_ppp_n', 'ppp'))
+
+# H1 of every difference test in Tables 1 and 2: the row beats its benchmark.
+ALTERNATIVE: str = 'greater'
+
+# Everything from `metrics.SUMMARY_ROWS` except `sharpe_pval`, a two-sided test
+# against equal weight; the tests the tables report are their own panels.
 PERFORMANCE_ROWS: dict[str, str] = {
     'ann_return': 'Annualised return (%)',
     'ann_vol': 'Annualised volatility (%)',
@@ -76,7 +106,19 @@ PERFORMANCE_KIND: dict[str, str] = {
     'CRRA certainty equivalent (%)': 'pct', 'Annualised turnover': 'num',
     'Average effective N': 'num'}
 
-# Mean first, certainty equivalent last. See the module docstring.
+PANEL_LEVELS: str = 'Panel A: Performance'
+
+# The difference panels of Tables 1 and 2: per statistic, the difference, its
+# t-statistic and its bootstrap p-value. Mean first, certainty equivalent last;
+# see the module docstring.
+DIFFERENCE_ROWS: tuple[tuple[str, str, str], ...] = (
+    ('mean_return', 'Mean return (pp)', 'pct'),
+    ('sharpe', 'Sharpe ratio', 'num'),
+    ('crra_ce', 'CRRA certainty equivalent (pp)', 'pct'))
+T_ROW: str = '\\quad $t$-statistic'
+P_ROW: str = '\\quad Bootstrap $p$-value'
+
+# Table 3's test panels, in the same order.
 TEST_PANEL: tuple[tuple[str, str, str], ...] = (
     ('mean_return', 'Panel A: Mean return', 'pct'),
     ('sharpe', 'Panel B: Sharpe ratio', 'num'),
@@ -252,79 +294,153 @@ def render_latex (blocks: list[tuple[pd.DataFrame, pd.Series,
     return '\n'.join(lines)+'\n'
 
 
-def table_performance (summary: pd.DataFrame)-> tuple[pd.DataFrame, pd.Series]:
-    """Table 1: what each strategy did, with no inference in it."""
-    columns: list[str] = [s for s in STRATEGY_ORDER if s in summary.columns]
+def _levels_block (summary: pd.DataFrame, order: tuple[str, ...],
+                   labels: dict[str, str]
+                   )-> tuple[pd.DataFrame, pd.Series, None]:
+    """Panel A of Tables 1 and 2: what each strategy did, with no inference in it.
+
+    Returns:
+        tuple: the frame indexed `(panel, row)`, the format kind per row, and
+            no significance markers.
+    """
+    columns: list[str] = [s for s in order if s in summary.columns]
+    rows: list[tuple[str, str]] = [(PANEL_LEVELS, PERFORMANCE_ROWS[r])
+                                   for r in PERFORMANCE_ROWS]
     frame: pd.DataFrame = summary.loc[list(PERFORMANCE_ROWS), columns]
-    frame.index = [PERFORMANCE_ROWS[r] for r in frame.index]
-    frame.columns = [STRATEGY_LABEL[c] for c in columns]
-    return frame, pd.Series(PERFORMANCE_KIND).reindex(frame.index)
+    frame.index = pd.MultiIndex.from_tuples(rows)
+    frame.columns = [labels[c] for c in columns]
+    kinds: pd.Series = pd.Series({row: PERFORMANCE_KIND[row[1]] for row in rows})
+    return frame, kinds.reindex(frame.index), None
 
 
-def table_inference (returns: pd.DataFrame, benchmark: str = BENCHMARK,
-                     gamma: float = risk_aversion, n_boot: int = 4999,
-                     seed: int = 0)-> tuple[pd.DataFrame, pd.Series,
-                                            pd.DataFrame]:
-    """Table 2: all three difference tests against the benchmark.
+def _difference_block (returns: pd.DataFrame,
+                       pairs: list[tuple[str, str, str]], panel: str,
+                       gamma: float = risk_aversion, n_boot: int = 4999,
+                       seed: int = 0, alternative: str = ALTERNATIVE
+                       )-> tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+    """One panel of difference tests: three statistics for each pair.
 
     Args:
-        returns (pd.DataFrame): `monthly_returns.csv` -- `<strategy>_gross`,
-            `<strategy>_net` and `rf`. Net returns are used throughout, and the
-            Sharpe test is handed excess returns while the other two take total
-            returns, which is what each of them requires.
-        benchmark (str): Strategy every difference is taken against.
+        returns (pd.DataFrame): `monthly_returns.csv` -- `<strategy>_net` and
+            `rf`. Net returns throughout; the Sharpe test is handed excess
+            returns and the other two total returns, which is what each of
+            them requires.
+        pairs (list[tuple[str, str, str]]): `(column, strategy, benchmark)`,
+            one column of the panel each, reporting `strategy` minus
+            `benchmark`.
+        panel (str): The panel's title.
         gamma (float): Relative risk aversion for the CE test.
         n_boot (int): Bootstrap resamples per test.
         seed (int): Seeds every bootstrap.
+        alternative (str): Passed to all three tests. Defaults to
+            `ALTERNATIVE`.
 
     Returns:
-        tuple: the numeric frame indexed by `(panel, row)`, the format kind per
-            row, and the significance markers.
+        tuple: the numeric frame, indexed `(panel, statistic, row)` so that the
+            three t-statistic rows stay distinct; the format kind per row; and
+            the significance markers, on the difference rows only.
     """
     rf: pd.Series = returns['rf']
-    bench: pd.Series = returns[f'{benchmark}_net']
-    names: list[str] = [s for s in STRATEGY_ORDER
-                        if s != benchmark and f'{s}_net' in returns.columns]
+    values: dict[tuple[str, str, str], dict[str, float]] = {}
+    marks: dict[tuple[str, str, str], dict[str, str]] = {}
+    kinds: dict[tuple[str, str, str], str] = {}
+    for key, name, kind in DIFFERENCE_ROWS:
+        head: tuple[str, str, str] = (panel, key, name)
+        t_row: tuple[str, str, str] = (panel, key, T_ROW)
+        p_row: tuple[str, str, str] = (panel, key, P_ROW)
+        kinds.update({head: kind, t_row: 'num', p_row: 'pval'})
+        for row in (head, t_row, p_row):
+            values[row] = {}
+            marks[row] = {}
 
-    values: dict[tuple[str, str], dict[str, float]] = {}
-    marks: dict[tuple[str, str], dict[str, str]] = {}
-    kinds: dict[tuple[str, str], str] = {}
-    for key, panel, kind in TEST_PANEL:
-        kinds[(panel, DIFFERENCE)] = kind
-        kinds[(panel, T_STAT)] = 'num'
-        kinds[(panel, P_VALUE)] = 'pval'
-        for row in (DIFFERENCE, T_STAT, P_VALUE):
-            values.setdefault((panel, row), {})
-            marks.setdefault((panel, row), {})
-
-        for name in names:
-            strategy: pd.Series = returns[f'{name}_net']
+        for column, strategy, benchmark in pairs:
+            x: pd.Series = returns[f'{strategy}_net']
+            b: pd.Series = returns[f'{benchmark}_net']
             if key == 'sharpe':
-                out = sharpe_difference_test(strategy-rf, bench-rf,
-                                             n_boot=n_boot, seed=seed)
+                out = sharpe_difference_test(x-rf, b-rf, n_boot=n_boot,
+                                             seed=seed, alternative=alternative)
                 diff, err = 'sr_diff', 'sr_diff_se'
             elif key == 'crra_ce':
-                out = ce_difference_test(strategy, bench, gamma=gamma,
-                                         n_boot=n_boot, seed=seed)
+                out = ce_difference_test(x, b, gamma=gamma, n_boot=n_boot,
+                                         seed=seed, alternative=alternative)
                 diff, err = 'ce_diff', 'ce_diff_se'
             else:
-                out = mean_difference_test(strategy, bench, n_boot=n_boot,
-                                           seed=seed)
+                out = mean_difference_test(x, b, n_boot=n_boot, seed=seed,
+                                           alternative=alternative)
                 diff, err = 'mean_diff', 'mean_diff_se'
-            label: str = STRATEGY_LABEL[name]
             se: float = float(out[err])
             pval: float = float(out['pval_boot'])
-            values[(panel, DIFFERENCE)][label] = float(out[diff])
-            values[(panel, T_STAT)][label] = (float(out[diff])/se if se > 0
-                                              else float('nan'))
-            values[(panel, P_VALUE)][label] = pval
-            marks[(panel, DIFFERENCE)][label] = _stars(pval)
+            values[head][column] = float(out[diff])
+            values[t_row][column] = (float(out[diff])/se if se > 0
+                                     else float('nan'))
+            values[p_row][column] = pval
+            marks[head][column] = _stars(pval)
 
-    frame: pd.DataFrame = pd.DataFrame(values).T
+    columns: list[str] = [column for column, _, _ in pairs]
+    frame: pd.DataFrame = pd.DataFrame(values).T.reindex(columns=columns)
     frame.index = pd.MultiIndex.from_tuples(frame.index)
-    star_frame: pd.DataFrame = pd.DataFrame(marks).T.reindex(
-        frame.index).fillna('')
+    star_frame: pd.DataFrame = (pd.DataFrame(marks).T
+                                .reindex(index=frame.index, columns=columns)
+                                .fillna(''))
     return frame, pd.Series(kinds).reindex(frame.index), star_frame
+
+
+def table_ex_post (summary: pd.DataFrame, returns: pd.DataFrame,
+                   gamma: float = risk_aversion, n_boot: int = 4999,
+                   seed: int = 0
+                   )-> dict[str, tuple[pd.DataFrame, pd.Series,
+                                       pd.DataFrame|None]]:
+    """Table 1: B&H and the proposed model's ex post rows.
+
+    Returns:
+        dict: `'performance'` (Panel A) and `'tests'` (Panel B, each proposed
+            row minus B&H), each a `(frame, kinds, stars)` triple ready for
+            `render_latex`.
+    """
+    order: list[str] = [s for s in EX_POST_ORDER if s in summary.columns]
+    pairs: list[tuple[str, str, str]] = [
+        (EX_POST_LABEL[s], s, EX_POST_BENCHMARK)
+        for s in order if s != EX_POST_BENCHMARK]
+    return {'performance': _levels_block(summary, EX_POST_ORDER, EX_POST_LABEL),
+            'tests': _difference_block(returns, pairs,
+                                       'Panel B: Difference from B&H',
+                                       gamma=gamma, n_boot=n_boot, seed=seed)}
+
+
+def table_historical (summary: pd.DataFrame, returns: pd.DataFrame,
+                      gamma: float = risk_aversion, n_boot: int = 4999,
+                      seed: int = 0
+                      )-> dict[str, tuple[pd.DataFrame, pd.Series,
+                                          pd.DataFrame|None]]:
+    """Table 2: equal weight, EPO, PPP and the proposed model's historical rows.
+
+    Returns:
+        dict: `'performance'` (Panel A), `'vs_equal_weight'` (Panel B, every
+            row minus equal weight) and, when a matched row and its comparator
+            are both there, `'vs_matched'` (Panel C, each matched row minus
+            that comparator). Each a `(frame, kinds, stars)` triple.
+    """
+    order: list[str] = [s for s in HISTORICAL_ORDER if s in summary.columns]
+    vs_ew: list[tuple[str, str, str]] = [
+        (HISTORICAL_LABEL[s], s, HISTORICAL_BENCHMARK)
+        for s in order if s != HISTORICAL_BENCHMARK]
+    vs_matched: list[tuple[str, str, str]] = [
+        (f'{HISTORICAL_LABEL[row]} $-$ {HISTORICAL_LABEL[comparator]}',
+         row, comparator)
+        for row, comparator in MATCHED
+        if row in summary.columns and comparator in summary.columns]
+    blocks: dict[str, tuple[pd.DataFrame, pd.Series, pd.DataFrame|None]] = {
+        'performance': _levels_block(summary, HISTORICAL_ORDER,
+                                     HISTORICAL_LABEL),
+        'vs_equal_weight': _difference_block(
+            returns, vs_ew, 'Panel B: Difference from equal weight',
+            gamma=gamma, n_boot=n_boot, seed=seed)}
+    if vs_matched:
+        blocks['vs_matched'] = _difference_block(
+            returns, vs_matched,
+            'Panel C: Difference from the matched comparator',
+            gamma=gamma, n_boot=n_boot, seed=seed)
+    return blocks
 
 
 def table_experiment (seed: int = 0, n_sim: int = 10000,
@@ -461,55 +577,95 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
     common: str = (f'Sample {period} ({n_month} monthly observations). '
                    f'Returns are net of {backtest_cost_bps:.0f}~bps of '
                    f'one-way transaction cost.')
+    tests_note: str = (
+        'All tests are one-sided and paired, $H_1$: the row exceeds its '
+        'benchmark. Each is a delta method over sample moments with a '
+        'prewhitened quadratic-spectral HAC long-run covariance (Andrews, '
+        '1991; Andrews and Monahan, 1992); the reported $p$-value is from a '
+        'studentized circular block bootstrap with block length 5 and '
+        f'{n_boot} resamples (Ledoit and Wolf, 2008).')
+    units_note: str = (
+        'Mean return and certainty equivalent differences are annualised, in '
+        'percentage points; the Sharpe ratio difference is annualised, in '
+        'ratio units. The certainty equivalent is the annualised certain '
+        f'return an investor with CRRA utility at $\\gamma={gamma:g}$ would '
+        'accept in place of the realised series. Turnover is the annualised '
+        'sum of absolute weight changes. Effective N is $1/\\sum_i w_i^2$ '
+        'averaged over months: the number of equally weighted holdings that '
+        'would be as concentrated as the book.')
+    stars_note: str = ('$^{***}$, $^{**}$ and $^{*}$ denote significance at '
+                       'the 1\\%, 5\\% and 10\\% levels.')
 
-    perf, perf_kind = table_performance(summary)
-    _write(perf, 'table1_performance')
-    _write_tex(render_latex(
-        [(perf, perf_kind, None)],
-        caption='Performance of each portfolio strategy.',
-        label='tab:performance',
-        notes=[
-            common,
-            'The certainty equivalent is the annualised certain return an '
-            f'investor with CRRA utility at $\\gamma={gamma:g}$ would accept '
-            'in place of the realised series.',
-            'Turnover is the annualised sum of absolute weight changes. '
-            'Effective N is $1/\\sum_i w_i^2$ averaged over months: the '
-            'number of equally weighted holdings that would be as '
-            'concentrated as the book.',
-            'Tests of the differences between these strategies and the '
-            'equal-weight benchmark are reported in '
-            'Table~\\ref{tab:inference}.']),
-        'table1_performance')
+    if (EX_POST_BENCHMARK in summary.columns
+            and any(s in summary.columns for s in EX_POST_ORDER[1:])):
+        ex_post = table_ex_post(summary, returns, gamma=gamma, n_boot=n_boot,
+                                seed=seed)
+        for name, (frame, _, _) in ex_post.items():
+            _write(frame, f'table1_ex_post_{name}')
+        n_test: int = 3*len(ex_post['tests'][0].columns)
+        _write_tex(render_latex(
+            [ex_post['performance'], ex_post['tests']],
+            caption='Ex post: Bielstein and Hanauer against the proposed '
+                    'model.',
+            label='tab:ex_post',
+            notes=[
+                common+' Every row is ex post: it is formed with accounting '
+                'data realised after the formation date, so it is a benchmark '
+                'under perfect foresight and not an implementable strategy.',
+                'B\\&H is the portfolio of Bielstein and Hanauer (2019): '
+                'maximum Sharpe ratio on the implied cost of capital of '
+                'Gebhardt, Lee and Swaminathan (2001) plus rescaled momentum, '
+                'with a Ledoit--Wolf covariance and a 5\\% cap per name. Its '
+                'explicit earnings years are the realised ones over the same '
+                "future window the proposed model's moments are drawn from.",
+                'The proposed rows are solved on one set of simulated implied '
+                'returns. Max Sharpe uses only their mean and covariance; '
+                'CRRA uses the whole distribution. Both are held, at each '
+                "rebalance date, to B\\&H's effective number of names at that "
+                'date; the unconstrained row is the model as specified.',
+                'Panel B reports each proposed row minus B\\&H. '+tests_note,
+                units_note,
+                f'Panel B carries {n_test} tests; the notes on multiple '
+                'testing in the text apply.',
+                stars_note]),
+            'table1_ex_post')
+    else:
+        warnings.warn('Table 1 skipped: summary.csv has no icc_mvo_ex_post '
+                      'column, or no proposed ex post row to set against it. '
+                      'Run them with `run --only`, then `run --rebuild`.',
+                      RuntimeWarning)
 
-    infer, infer_kind, infer_star = table_inference(
-        returns, gamma=gamma, n_boot=n_boot, seed=seed)
-    _write(infer, 'table2_inference')
-    _write_tex(render_latex(
-        [(infer, infer_kind, infer_star)],
-        caption='Difference tests against the equal-weight benchmark.',
-        label='tab:inference',
-        notes=[
-            common+' Each column reports the strategy minus the equal-weight '
-            'benchmark, whose levels are in Table~\\ref{tab:performance}.',
-            'All tests are two-sided and paired. Each is a delta method over '
-            'sample moments with a prewhitened quadratic-spectral HAC '
-            'long-run covariance (Andrews, 1991; Andrews and Monahan, 1992); '
-            'the reported $p$-value is from a studentized circular block '
-            f'bootstrap with block length 5 and {n_boot} resamples '
-            '(Ledoit and Wolf, 2008).',
-            'The panels are ordered from the statistic that does not adjust '
-            'for risk to the one that penalises it most heavily. A mean '
-            'return difference is not scale-invariant: it rises with leverage '
-            'without the accompanying volatility being charged for. '
-            'Significance in Panel A alongside insignificance in Panels B '
-            'and C is therefore a statement about volatility, not about '
-            'skill.',
-            'With three tests across four strategies these are twelve '
-            'comparisons; the notes on multiple testing in the text apply.',
-            '$^{***}$, $^{**}$ and $^{*}$ denote significance at the 1\\%, '
-            '5\\% and 10\\% levels.']),
-        'table2_inference')
+    if HISTORICAL_BENCHMARK in summary.columns:
+        historical = table_historical(summary, returns, gamma=gamma,
+                                      n_boot=n_boot, seed=seed)
+        for name, (frame, _, _) in historical.items():
+            _write(frame, f'table2_historical_{name}')
+        n_test = 3*sum(len(block[0].columns)
+                       for name, block in historical.items()
+                       if name != 'performance')
+        _write_tex(render_latex(
+            list(historical.values()),
+            caption='Historical: the proposed model against equal weight, EPO '
+                    'and PPP.',
+            label='tab:historical',
+            notes=[
+                common+' The proposed model elicits its moments from the '
+                'training window only, so every row is implementable.',
+                'The EPO $N$ and PPP $N$ rows hold the proposed model, at each '
+                "rebalance date, to that comparator's effective number of "
+                'names at that date; the unconstrained row is the model as '
+                'specified.',
+                'Panel B reports each strategy minus equal weight; Panel C '
+                'each matched row minus the comparator whose breadth it '
+                'holds. '+tests_note,
+                units_note,
+                f'Panels B and C carry {n_test} tests; the notes on multiple '
+                'testing in the text apply.',
+                stars_note]),
+            'table2_historical')
+    else:
+        warnings.warn('Table 2 skipped: summary.csv has no equal_weight '
+                      'column to test against.', RuntimeWarning)
 
     if not skip_experiment:
         blocks: dict = table_experiment(seed=seed, n_sim=n_sim, gamma=gamma,
