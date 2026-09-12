@@ -55,8 +55,8 @@ reproduces it. Nothing about the certainty equivalent makes that better. If
 anything it is worse: at `gamma=5` the exponent `k/(1-gamma)` is -3, so `X` is a
 *negative* power of the gross return and the transformation puts its long left
 tail exactly where a bad month is, while the concentrated books in this backtest
-(`avg_weight_entropy` near 0.03 for the proposed model, i.e. `exp(entropy)` of
-about one name) deliver monthly returns with close to single-stock tails. The
+(an `avg_effective_n` of 1.05 for the proposed model, i.e. about one name)
+deliver monthly returns with close to single-stock tails. The
 bootstrap held its nominal level across every process the paper tried and is
 what `metrics` reports.
 

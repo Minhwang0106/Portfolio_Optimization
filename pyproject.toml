@@ -18,6 +18,7 @@ dependencies = [
     "pandas>=3.0.3",
     "pyvinecopulib>=0.7.6",
     "requests>=2.34.2",
+    "scikit-learn>=1.9.0",
     "scipy>=1.18.0",
     "yfinance>=1.5.1",
 ]

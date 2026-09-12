@@ -17,3 +17,9 @@ monthly_price.csv.bak
 current problem
 .claude/
 Temporary/
+# ~2.7 GB of simulated implied returns, written only by
+# `--dump-implied-return`. Regenerate rather than commit.
+Data/Result/implied_return/
+Discussion/
+Code_graph/
+test.py

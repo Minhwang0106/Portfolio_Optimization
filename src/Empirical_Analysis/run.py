@@ -1,6 +1,6 @@
 """Run every strategy over the sample period and write the comparison out.
 
-    python -m src.Empirical_Analysis.run                      # all five
+    python -m src.Empirical_Analysis.run                      # all six
     python -m src.Empirical_Analysis.run --n-workers 5
     python -m src.Empirical_Analysis.run --only epo ppp --verbose
     python -m src.Empirical_Analysis.run --rebuild            # summary only
@@ -10,12 +10,13 @@ weights a finished run already wrote and recomputes everything downstream of
 them, in seconds rather than hours, without importing a single model. See
 `rebuild`.
 
-Five strategies, of which one pair is the same model:
+Six strategies, of which one pair is the same model:
 
 Every weighting rule here is long-only and fully invested by default, which is
 what makes the return columns comparable at all; `--long-short` restores the
 long-short forms the three papers state, and it reaches all of them -- `epo`,
-`ppp` and both `proposed_*` runs.
+`ppp` and both `proposed_*` runs. It leaves `icc_mvo_ex_post` alone: Bielstein
+and Hanauer state a long-only book, so that is the one it runs.
 
 One EPO row, not two. Under the default it is the objective solved on the
 simplex, which is this repo's addition: eq. (16) is what Proposition 2 (p.13,
@@ -33,6 +34,14 @@ selected against whichever book is built, never across the two -- see
   `--long-short`.
 * `ppp` -- the parametric portfolio policy, monthly, shorts truncated inside
   the theta fit.
+* `icc_mvo_ex_post` -- Bielstein & Hanauer's (2019) construction: maximum
+  Sharpe ratio on the Gebhardt-Lee-Swaminathan implied cost of capital plus
+  rescaled momentum, Ledoit-Wolf covariance, long-only with a 5% cap.
+  Quarterly by default, on the proposed model's calendar; `--icc-annual`
+  rebalances each June, as B&H do. **Lookahead; not a strategy.** Its three
+  explicit earnings years are the realised ones, so it is a point-estimate
+  benchmark under perfect earnings foresight -- the ablation arm to read
+  against `proposed_ex_post`, never against the tradeable rows.
 * `proposed_historical` -- the residual income model, quarterly, moments
   elicited from the training window. **This is the tradeable one.**
 * `proposed_ex_post` -- the same model with `ex_post=True`, i.e. moments
@@ -73,13 +82,13 @@ from pathlib import Path
 from typing import Any
 from constant import (
     testing_period, RAW_BACKTEST_DIR, backtest_cost_bps, ppp_estimation_month,
-    risk_aversion
+    risk_aversion, IMPLIED_RETURN_DIR, icc_weight_cap
 )
 from .data import universe, monthly_return, risk_free
 from .engine import backtest, quarter_ends, BacktestResult, WeightFn
 from .metrics import summarise, cumulative_wealth
 
-STRATEGIES: tuple[str, ...] = ('equal_weight', 'epo', 'ppp',
+STRATEGIES: tuple[str, ...] = ('equal_weight', 'epo', 'ppp', 'icc_mvo_ex_post',
                                'proposed_historical', 'proposed_ex_post')
 
 # The two that call `RIM_PortOp`, and the elicitation window each one uses.
@@ -99,13 +108,13 @@ def _dated_seed (base: int, date: pd.Timestamp)-> int:
 
 def _proposed_at (date: pd.Timestamp, tickers: list[str], base_seed: int,
                   n_samples: int, n_lags: int, ex_post: bool, common_theta: bool,
-                  long_only: bool)-> pd.Series:
+                  long_only: bool, dump_dir: Path|None = None)-> pd.Series:
     """`strategy.proposed_weight` with the seed varied by date. See `_dated_seed`."""
     from .strategy import proposed_weight
     return proposed_weight(date, tickers, n_samples=n_samples, n_lags=n_lags,
                            ex_post=ex_post, common_theta=common_theta,
                            seed=_dated_seed(base_seed, date),
-                           long_only=long_only)
+                           long_only=long_only, dump_dir=dump_dir)
 
 
 def _build (label: str, params: dict[str, Any]
@@ -168,6 +177,19 @@ def _build (label: str, params: dict[str, Any]
                         long_only=params['long_only']),
                 None)
 
+    if label == 'icc_mvo_ex_post':
+        from ..ICC_MVO.model import Icc_Mvo
+        from .strategy import icc_mvo_weight
+        Icc_Mvo.Config()
+        # Quarterly by default, on the proposed model's calendar, so that the
+        # two ex post rows differ in the model and not in how often they
+        # trade. B&H themselves rebalance once a year, at the end of June.
+        # Long-only whatever `params['long_only']` says: that is B&H's book.
+        schedule: list[pd.Timestamp] = (
+            [d for d in params['dates'] if d.month == 6]
+            if params['icc_annual'] else quarter_ends(params['dates']))
+        return partial(icc_mvo_weight, cap=params['icc_cap']), schedule
+
     if label in _PROPOSED:
         from ..Proposed_Model.model import RIM_PortOp
         RIM_PortOp.Config()
@@ -177,7 +199,8 @@ def _build (label: str, params: dict[str, Any]
                         n_lags=params['n_lags'],
                         ex_post=_PROPOSED[label],
                         common_theta=params['common_theta'],
-                        long_only=params['long_only']),
+                        long_only=params['long_only'],
+                        dump_dir=params['dump_dir']),
                 quarter_ends(dates) if params['proposed_quarterly'] else None)
 
     raise ValueError(f'unknown strategy {label!r}; pick from {STRATEGIES}')
@@ -222,12 +245,14 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
              epo_scale: str = 'gross', epo_workers: int|None = None,
              ppp_n_month: int = ppp_estimation_month,
              proposed_quarterly: bool = True,
+             icc_cap: float = icc_weight_cap, icc_annual: bool = False,
              n_samples: int = 10000, n_lags: int = 4,
              common_theta: bool = True, long_only: bool = True,
              seed: int = 0, verbose: bool = False,
              sr_benchmark: str|None = 'equal_weight', n_boot: int = 4999,
              sr_block: int|str = 5,
-             result_dir: Path|None = RAW_BACKTEST_DIR
+             result_dir: Path|None = RAW_BACKTEST_DIR,
+             dump_dir: Path|None = None
              )-> tuple[dict[str, BacktestResult], pd.DataFrame]:
     """Backtest every strategy on one universe and one calendar, in parallel.
 
@@ -235,8 +260,9 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
     the same formation dates, so a difference between them is a difference in
     the weighting rule and not in what they were allowed to hold. Each still
     screens that list its own way -- PPP for a complete characteristic record,
-    `RIM_PortOp` for `constant.min_char_obs` usable quarters -- and the
-    surviving book's breadth is reported as `avg_weight_entropy`.
+    `RIM_PortOp` for `constant.min_char_obs` usable quarters, `Icc_Mvo` for a
+    solvable implied cost of capital -- and the surviving book's breadth is
+    reported as `avg_effective_n`.
 
     Args:
         dates: Formation dates. Defaults to `constant.testing_period` (month
@@ -267,6 +293,13 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
         proposed_quarterly (bool): Rebalance both proposed variants on quarter
             ends only, holding through the intervening months. Defaults to True;
             see `engine.quarter_ends`. EPO and PPP always rebalance monthly.
+        icc_cap (float): Largest weight `icc_mvo_ex_post` puts on one name.
+            Defaults to `constant.icc_weight_cap`, Bielstein & Hanauer's 5%;
+            1 removes the cap.
+        icc_annual (bool): Rebalance `icc_mvo_ex_post` once a year at the end
+            of June, as B&H do, instead of on the proposed model's quarter
+            ends. Defaults to False, which keeps the two ex post rows on one
+            calendar.
         n_samples (int): Simulated paths per ticker in the proposed model.
             Defaults to 10000. Lower it to iterate.
         n_lags (int): Lags the proposed model's persistence fit reads. Defaults
@@ -325,7 +358,8 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
         docstring and `strategy.proposed_weight`. It is in the summary table
         because the gap to `proposed_historical` is the number worth reading;
         quoting its Sharpe ratio on its own would be quoting a forecast of the
-        past.
+        past. `icc_mvo_ex_post` is the same kind of row: its explicit earnings
+        years are realised, not forecast.
 
     Example:
         >>> results, table = run_all(only=('equal_weight', 'ppp'),
@@ -355,9 +389,11 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
         'dates': [pd.Timestamp(d) for d in dates],
         'cost_bps': cost_bps, 'epo_scale': epo_scale,
         'epo_workers': epo_workers, 'ppp_n_month': ppp_n_month,
-        'proposed_quarterly': proposed_quarterly, 'n_samples': n_samples,
+        'proposed_quarterly': proposed_quarterly,
+        'icc_cap': icc_cap, 'icc_annual': icc_annual, 'n_samples': n_samples,
         'n_lags': n_lags, 'common_theta': common_theta,
         'long_only': long_only, 'seed': seed, 'verbose': verbose,
+        'dump_dir': dump_dir,
     }
     jobs: list[tuple[str, dict[str, Any]]] = [(s, params) for s in wanted]
 
@@ -459,7 +495,7 @@ def rebuild (result_dir: Path = RAW_BACKTEST_DIR, dates=testing_period,
     re-summarises. `RIM_PortOp`, `EPO` and `PPP` are never imported.
 
     That replay is the reason this is not simply re-reading `summary.csv`: any
-    statistic of the *held* book, `entropy` among them, is a per-month quantity
+    statistic of the *held* book, `effective_n` among them, is a per-month quantity
     that the saved aggregates cannot reconstruct. Replaying regenerates the
     per-month diagnostics too.
 
@@ -558,7 +594,7 @@ def rebuild (result_dir: Path = RAW_BACKTEST_DIR, dates=testing_period,
 def _cli ()-> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='Backtest the proposed model (historical and ex post), '
-                    'EPO and PPP on one universe.')
+                    'ICC-MVO, EPO and PPP on one universe.')
     parser.add_argument('--rebuild', action='store_true',
                         help='recompute the summary from the saved weights in '
                              '--out, without running any model. Use after '
@@ -581,6 +617,13 @@ def _cli ()-> argparse.Namespace:
                         help='simulated paths per ticker in the proposed model')
     parser.add_argument('--monthly-proposed', action='store_true',
                         help='rebalance the proposed model monthly (very slow)')
+    parser.add_argument('--icc-cap', type=float, default=icc_weight_cap,
+                        help='largest weight icc_mvo_ex_post puts on one name '
+                             f'(default {icc_weight_cap:g}, Bielstein and '
+                             "Hanauer's; 1 removes the cap)")
+    parser.add_argument('--icc-annual', action='store_true',
+                        help='rebalance icc_mvo_ex_post each June, as '
+                             'Bielstein and Hanauer do, instead of quarterly')
     parser.add_argument('--long-short', action='store_true',
                         help='let EPO, PPP and the proposed model go short, '
                              'i.e. run those papers as stated. For EPO this '
@@ -598,6 +641,16 @@ def _cli ()-> argparse.Namespace:
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--out', type=Path, default=RAW_BACKTEST_DIR)
+    parser.add_argument('--dump-implied-return', type=Path, nargs='?',
+                        const=IMPLIED_RETURN_DIR, default=None,
+                        metavar='DIR',
+                        help='also write the simulated implied returns the '
+                             'proposed model optimises over, one CSV per '
+                             'formation date per '
+                             'variant (rows simulations, columns tickers). '
+                             f'Defaults to {IMPLIED_RETURN_DIR} when the flag '
+                             'is given without a path. ~30 MB per file, '
+                             '~2.7 GB over a full run.')
     return parser.parse_args()
 
 
@@ -638,9 +691,11 @@ if __name__ == '__main__':
         cost_bps=args.cost_bps, epo_scale=args.epo_scale,
         epo_workers=args.epo_workers, n_samples=args.n_samples,
         proposed_quarterly=not args.monthly_proposed,
+        icc_cap=args.icc_cap, icc_annual=args.icc_annual,
         long_only=not args.long_short, seed=args.seed, verbose=args.verbose,
         sr_benchmark=sr_benchmark_arg, n_boot=args.n_boot,
-        sr_block=sr_block_arg, result_dir=args.out)
+        sr_block=sr_block_arg, result_dir=args.out,
+        dump_dir=args.dump_implied_return)
     with pd.option_context('display.width', 160,
                            'display.float_format', '{:,.4f}'.format):
         print()

@@ -452,6 +452,15 @@ def main (argv: list[str]|None = None)-> None:
 
     Steps 2 and 3 are the network-bound hours; 4 and 5 are seconds and read
     only what is already on disk.
+
+    Alongside step 4, `industry.run_industry` maps every ticker to its
+    Fama-French 48 industry, which `ICC_MVO` needs for its industry ROE. One
+    SEC request per ticker, about a minute; it depends on nothing the other
+    steps write, only on the ticker list and the User-Agent. Then
+    `industry_pool.run_industry_pool` builds the pool that median is taken
+    over: every SEC filer's calendar-year ROE and industry. A minute of XBRL
+    frames, then one request per filer not yet in the SIC cache -- most of an
+    hour the first time, seconds after that.
     """
     import argparse
     from .ticker_list import build_ticker_list
@@ -498,6 +507,10 @@ def main (argv: list[str]|None = None)-> None:
             user_agent=user_agent)
         run_splits(ticker=tickers, resume=args.resume)
         print(f'share adjustment: {run_share_adjustment()}')
+        from .industry import run_industry
+        from .industry_pool import run_industry_pool
+        run_industry(user_agent=user_agent, tickers=tickers)
+        run_industry_pool(user_agent=user_agent)
 
     overtime: dict[str, set[str]] = run_applicable_ticker()
     sizes: list[int] = [len(v) for v in overtime.values()]

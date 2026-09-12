@@ -46,12 +46,17 @@ from .mean_inference import mean_difference_test
 from . import experiment_thought as thought
 
 BENCHMARK: str = 'equal_weight'
-# Benchmark first, then the two models from the literature, then ours -- the bar,
-# what clears it, and what this paper proposes.
+# Benchmark first, then the models from the literature, then ours -- the bar,
+# what clears it, and what this paper proposes. `icc_mvo_ex_post` is from the
+# literature but sits against the proposed rows: it is the ablation's
+# point-estimate arm, built on realised earnings, and is read against
+# `proposed_ex_post` rather than against the tradeable books.
 STRATEGY_ORDER: tuple[str, ...] = ('equal_weight', 'epo', 'ppp',
-                                   'proposed_historical', 'proposed_ex_post')
+                                   'icc_mvo_ex_post', 'proposed_historical',
+                                   'proposed_ex_post')
 STRATEGY_LABEL: dict[str, str] = {
     'equal_weight': 'Equal-weight', 'epo': 'EPO', 'ppp': 'PPP',
+    'icc_mvo_ex_post': 'ICC-MVO (ex post)',
     'proposed_historical': 'Proposed (hist.)',
     'proposed_ex_post': 'Proposed (ex post)'}
 
@@ -64,12 +69,12 @@ PERFORMANCE_ROWS: dict[str, str] = {
     'sharpe': 'Sharpe ratio',
     'ann_crra_ce': 'CRRA certainty equivalent (%)',
     'ann_turnover': 'Annualised turnover',
-    'avg_weight_entropy': 'Average weight entropy'}
+    'avg_effective_n': 'Average effective N'}
 PERFORMANCE_KIND: dict[str, str] = {
     'Annualised return (%)': 'pct', 'Annualised volatility (%)': 'pct',
     'Maximum drawdown (%)': 'pct', 'Sharpe ratio': 'num',
     'CRRA certainty equivalent (%)': 'pct', 'Annualised turnover': 'num',
-    'Average weight entropy': 'num'}
+    'Average effective N': 'num'}
 
 # Mean first, certainty equivalent last. See the module docstring.
 TEST_PANEL: tuple[tuple[str, str, str], ...] = (
@@ -469,9 +474,9 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
             f'investor with CRRA utility at $\\gamma={gamma:g}$ would accept '
             'in place of the realised series.',
             'Turnover is the annualised sum of absolute weight changes. '
-            'Weight entropy is $-\\sum_i w_i \\ln w_i$ averaged over '
-            'rebalance dates; a lower value is a more concentrated book, and '
-            '$\\exp(\\cdot)$ of it is an effective number of holdings.',
+            'Effective N is $1/\\sum_i w_i^2$ averaged over months: the '
+            'number of equally weighted holdings that would be as '
+            'concentrated as the book.',
             'Tests of the differences between these strategies and the '
             'equal-weight benchmark are reported in '
             'Table~\\ref{tab:inference}.']),

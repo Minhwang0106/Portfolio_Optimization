@@ -32,7 +32,7 @@ python -m src.Empirical_Analysis.run --rebuild
 back through the same engine — same drift, same turnover, same costs — and
 recomputes everything downstream. Seconds instead of hours, and it imports no
 model at all. It replays rather than re-reading `summary.csv` because any
-statistic of the *held* book, `avg_weight_entropy` among them, is a per-month
+statistic of the *held* book, `avg_effective_n` among them, is a per-month
 quantity the saved aggregates cannot reconstruct.
 
 It verifies the replayed returns against the saved `monthly_returns.csv` and
@@ -47,10 +47,11 @@ numbers. Pass `verify=False` when a change to the returns is the point.
 | `equal_weight` | — | monthly | `1/N`, sums to 1 |
 | `epo` | `src.EPO` | monthly | long-only, sums to 1 |
 | `ppp` | `src.PPP` | monthly | long-only, sums to 1 |
+| `icc_mvo_ex_post` | `src.ICC_MVO` | quarterly (`--icc-annual`: each June) | long-only, ≤ 5% per name, sums to 1 |
 | `proposed_historical` | `src.Proposed_Model` | quarterly | long-only, sums to 1 |
 | `proposed_ex_post` | `src.Proposed_Model`, `ex_post=True` | quarterly | long-only, sums to 1 |
 
-All five are long-only and fully invested by default, which is what makes their
+All six are long-only and fully invested by default, which is what makes their
 return column comparable at all. `--long-short` restores the forms `EPO`, `PPP`
 and the proposed model state in their own papers; unconstrained PPP runs to a
 median 9.9x gross exposure and unconstrained EPO is close to market neutral, so
@@ -77,6 +78,15 @@ because the gap between it and `proposed_historical` decomposes the model's
 error into the simulation machinery and the moment forecast — a ceiling on what
 perfect moment forecasting would buy, never a result to quote on its own.
 
+`icc_mvo_ex_post` **is not a strategy either.** It is Bielstein & Hanauer's
+(2019) construction — maximum Sharpe ratio on the Gebhardt-Lee-Swaminathan
+implied cost of capital plus rescaled momentum — but its three explicit earnings
+years are the *realised* ones, since the repo has no analyst forecasts. It is
+the design's point-estimate arm, read against `proposed_ex_post`; every
+substitution for B&H's data is listed in `src/ICC_MVO/README.md`. It needs
+`industry.csv` (`python -m src.Data.industry`) for the industry ROE, and
+`--long-short` leaves it long-only, as B&H state it.
+
 `equal_weight` is the benchmark `PPP` tilts away from, on the same universe, so
 PPP's contribution is readable as the gap between the two.
 
@@ -87,7 +97,7 @@ measures the harness:
 
 - **Universe.** All six get `Data.exclusion.applicable_ticker`'s list at each
   date, spelled out below. Each model then screens it further its own way, which
-  is a property of the model and shows up in `avg_weight_entropy`, not equalised
+  is a property of the model and shows up in `avg_effective_n`, not equalised
   away.
 - **No lookahead.** A weight formed at month end `t` earns the month ending at
   `t+1`. Each model applies its own publication lag upstream; the engine's job
@@ -330,7 +340,7 @@ Eight rows, `metrics.SUMMARY_ROWS`:
 | `sharpe_pval` | bootstrap p-value against `equal_weight` — see above |
 | `ann_crra_ce` | at `constant.risk_aversion`, the objective two of the models fit |
 | `ann_turnover` | |
-| `avg_weight_entropy` | breadth, in nats |
+| `avg_effective_n` | breadth, as a name count |
 
 That is the whole table, and the whole computation — Sortino, Calmar, hit rate,
 skew, kurtosis, best and worst month, the exposure averages and the holding
@@ -339,15 +349,16 @@ way: the per-month series they summarised are still in each result's
 `diagnostics` (and in `diagnostics_<strategy>.csv`), and formation dates whose
 rule raised are still in `failures` and in `failures.csv`.
 
-**Entropy is the breadth measure.** `-Σ p ln p` on `p = |w| / gross`, averaged
-over months. An equal-weighted book of N names scores `ln N`, so `exp(entropy)`
-reads as a name count: 5.63 for `equal_weight` is ~279 names, 4.06 for `epo` is
-~58. It replaces `avg_n_holdings`, `avg_effective_n` and `avg_max_weight`, which
-were three answers to one question — and unlike the inverse Herfindahl, which is
-driven by the largest positions, entropy also notices whether the rest of the
-capital is spread or itself clustered. Taken on absolute weights over gross so
-it stays defined under `--long-short`, where a signed weight is not a
-probability; it then measures where risk is spread, not net position.
+**Effective N is the breadth measure.** `gross² / Σ w²`, the inverse Herfindahl
+of the held book, averaged over months: the number of equal positions that would
+be as concentrated. On the saved run it reads 285 for `equal_weight`, 72 for
+`epo`, 81 for `ppp`, and 1.0–1.2 for the two proposed rows. It is the breadth
+figure Bielstein & Hanauer report, so it is what puts `icc_mvo_ex_post` next to
+their books and what a matched-breadth run is matched on. It replaces
+`avg_weight_entropy`, which answered the same question in nats; `avg_n_holdings`
+and `avg_max_weight` stay out too. The per-month `entropy` is still in
+`diagnostics_<strategy>.csv`. Taken on gross exposure, so it stays defined under
+`--long-short`.
 
 `n_failed_date` is no longer reported. It is a correctness caveat rather than a
 metric — currently 0 for every strategy — so after any run whose universe or

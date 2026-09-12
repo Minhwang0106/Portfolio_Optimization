@@ -39,13 +39,16 @@ MONTHS_PER_YEAR: int = 12
 # Everything the comparison table reports, in order -- and everything it
 # computes: a table read side by side is worse for every row that is not being
 # compared on. `sharpe_pval` is the bootstrap p-value on `sharpe` against the
-# benchmark. `avg_weight_entropy` is the one breadth figure, in place of the
-# three (`avg_n_holdings`, `avg_effective_n`, `avg_max_weight`) that were
-# answering the same question. The per-month series behind these is untouched
-# in `BacktestResult.diagnostics` for anything a summary row cannot show.
+# benchmark. `avg_effective_n`, the inverse Herfindahl averaged over months, is
+# the one breadth figure. It is the one Bielstein & Hanauer (2019) report, so it
+# is what puts `icc_mvo_ex_post` next to their books, and what a matched-breadth
+# run is matched on. It replaces `avg_weight_entropy`, which answered the same
+# question in nats; `avg_n_holdings` and `avg_max_weight` stay out too. The
+# per-month series behind these -- entropy included -- is untouched in
+# `BacktestResult.diagnostics` for anything a summary row cannot show.
 SUMMARY_ROWS: tuple[str, ...] = (
     'ann_return', 'ann_vol', 'max_drawdown', 'sharpe', 'sharpe_pval',
-    'ann_crra_ce', 'ann_turnover', 'avg_weight_entropy')
+    'ann_crra_ce', 'ann_turnover', 'avg_effective_n')
 
 
 def _annualise_geometric (returns: pd.Series)-> float:
@@ -278,10 +281,12 @@ def summarise (results: dict[str, BacktestResult]|list[BacktestResult],
             # trade rather than a third as often.
             'ann_turnover': float(diag['turnover'].sum())*MONTHS_PER_YEAR
                             /len(diag),
-            # The breadth figure. A holding count would say most of the universe
-            # however concentrated the book is, because a bounded SLSQP solve
-            # leaves almost nothing at exactly zero; entropy reads the sizes.
-            'avg_weight_entropy': float(diag['entropy'].mean()),
+            # The breadth figure: the inverse Herfindahl per month, averaged --
+            # how many equal positions would be this concentrated. A holding
+            # count would say most of the universe however concentrated the
+            # book is, because a bounded SLSQP solve leaves almost nothing at
+            # exactly zero; this reads the sizes.
+            'avg_effective_n': float(diag['effective_n'].mean()),
         })])
 
         if benchmark is not None:

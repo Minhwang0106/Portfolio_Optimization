@@ -13,6 +13,11 @@ RESULT_DIR: Path = PROJECT_DIR / "Data" / "Result"
 RAW_BACKTEST_DIR: Path = RESULT_DIR / "raw_backtest"
 PROCESSED_BACKTEST_DIR: Path = RESULT_DIR / "processed_backtest"
 LATEX_DIR: Path = RESULT_DIR / "latex"
+# One file per formation date per proposed-model variant, written only when a
+# run asks for it (`run_all(dump_dir=...)`). Not part of a normal run's output:
+# 10,000 simulations x ~300 tickers is ~30 MB per file, ~2.7 GB across the 90,
+# which is why it is gitignored and why nothing reads it back automatically.
+IMPLIED_RETURN_DIR: Path = RESULT_DIR / "implied_return"
 
 daily_price: str = "daily_price.csv"
 monthly_price: str = "monthly_price.csv"
@@ -24,6 +29,10 @@ sp_500_historical_components: str = "sp_500_historical_components.csv"
 ticker: str = "ticker.csv"
 applicable_ticker: str = "applicable_ticker.csv"
 splits: str = "splits.csv"
+industry: str = "industry.csv"
+siccodes48: str = "Siccodes48.zip"
+industry_roe_pool: str = "industry_roe_pool.csv"
+sic_by_cik: str = "sic_by_cik.csv"
 
 daily_price_path: Path = RAW_DATA_DIR / daily_price
 monthly_price_path: Path = RAW_DATA_DIR / monthly_price
@@ -35,6 +44,17 @@ sp_500_path: Path = RAW_DATA_DIR / sp_500_historical_components
 ticker_path: Path = RAW_DATA_DIR / ticker
 applicable_ticker_path: Path = RAW_DATA_DIR / applicable_ticker
 splits_path: Path = RAW_DATA_DIR / splits
+# Ticker -> SEC SIC code -> Fama-French 48 industry, written by
+# `Data.industry`. The second file is Kenneth French's SIC-range definitions,
+# cached as downloaded so the mapping can be re-derived without the network.
+industry_path: Path = RAW_DATA_DIR / industry
+siccodes48_path: Path = RAW_DATA_DIR / siccodes48
+# Every SEC filer's calendar-year ROE with its FF48 industry, written by
+# `Data.industry_pool`: the pool the ICC industry median is taken over. The SIC
+# code of every CIK already looked up is cached in the second file, so an
+# interrupted run resumes where it stopped.
+industry_roe_pool_path: Path = RAW_DATA_DIR / industry_roe_pool
+sic_by_cik_path: Path = RAW_DATA_DIR / sic_by_cik
 
 # Split-basis alignment. The share count changes basis when a filing reports
 # the new count, and that ran from 18 days before the split (GOOGL) to 7 weeks
@@ -186,6 +206,17 @@ share_multiplier: dict[str, float] = {'BRK-B': 1500.0}
 # every entry silently overrides the authoritative source for that symbol, and
 # will keep overriding it after SEC fixes the mapping.
 cik_override: dict[str, str] = {'XOM': '0000034088'}
+
+# SIC -> Fama-French 48 industry, overriding French's ranges for a code that
+# falls outside every one of them. `Siccodes48.txt` predates several SIC codes
+# SEC now assigns (9995 'non-operating establishments', 9999 'non-classifiable
+# establishments', and 0 where a filer has none) -- `Data.industry.sic_to_ff48`
+# sends every one of those to the all-firm 'Other' fallback, which for 9995 and
+# 9999 is the right place anyway: a firm with no operations or no classification
+# has no industry peers to fade towards. This stays empty until a specific code
+# is found to need a different answer; keep it short, for the same reason as
+# `cik_override`.
+sic_override: dict[int, int] = {}
 
 # Balance-sheet field used to detect filings that report a placeholder balance
 # sheet, and how far below the ticker's own median it has to fall to count. A
@@ -398,4 +429,50 @@ backtest_cost_bps: float = 10.0
 # backtest and the model cannot drift apart silently.
 ppp_estimation_month: int = 60
 
+#Bielstein&Hanauer(2019) model
+# Gebhardt, Lee & Swaminathan's (2001) implied cost of capital, which
+# Bielstein & Hanauer (2019) feed to a maximum-Sharpe optimiser in place of a
+# historical mean. The valuation runs `icc_horizon` years: `icc_explicit_years`
+# of explicit earnings per share, then ROE fading linearly to the industry
+# median by the last year, then residual income held flat as a perpetuity. Both
+# are the GLS base case, which B&H take over unchanged. The explicit years here
+# are *realised* EPS, not analyst forecasts -- see `ICC_MVO.model.Icc_Mvo` for
+# why that makes the arm a lookahead benchmark rather than a strategy.
+icc_horizon: int = 12
+icc_explicit_years: int = 3
+
+# Payout ratio for a firm with no positive earnings to divide by: GLS assume
+# earnings of 6% of total assets for it, so k = dividends / (0.06 * total
+# assets). Every payout ratio is then clipped to [0, 1].
+icc_payout_ta: float = 0.06
+
+# Industry target ROE: the median over profitable firm-years in the firm's
+# Fama-French 48 industry, pooled over at least 5 and up to 10 past years, as
+# in GLS. The pool is every SEC filer (`Data.industry_pool`), not only this
+# repo's S&P 500 panel; XBRL starts in 2009, so the first formation dates sit on
+# the 5-year floor. A firm-year counts only if it starts from at least
+# `industry_pool_min_equity` dollars of common book equity, which keeps shells
+# and blank-cheque companies -- an ROE on a few thousand dollars of equity is
+# noise -- out of the median. An industry with fewer than `industry_min_obs`
+# profitable firm-years in its window takes the all-firm median instead. Over
+# the full pool that rarely binds; it matters when the pool file is missing and
+# the S&P 500 panel stands in, where some industries have one or two members
+# and a median over them would pull a firm towards its own history.
+industry_roe_years: tuple[int, int] = (5, 10)
+industry_min_obs: int = 10
+industry_pool_min_equity: float = 10e6
+
+# B&H's portfolio rule: maximum Sharpe ratio, long-only and fully invested, no
+# name above `icc_weight_cap`, and any weight under `icc_weight_floor` (0.01%)
+# set to zero. Their covariance matrix is Ledoit-Wolf (2004) shrinkage towards
+# constant correlation over `icc_cov_month` months of returns; a name needs all
+# of them priced, since the estimator takes a complete panel.
+icc_weight_cap: float = 0.05
+icc_weight_floor: float = 1e-4
+icc_cov_month: int = 60
+
+# Cross-sectional winsorisation of the ICC and of 12-1 momentum at each
+# formation date, this fraction in each tail, before momentum is standardised
+# and rescaled to the ICC's cross-sectional standard deviation.
+icc_winsor: float = 0.01
 

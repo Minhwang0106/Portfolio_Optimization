@@ -9,19 +9,23 @@ by ticker. None of the three models offers that:
 * `PPP.portfolio_weight` returns a `(1, n_t)` array ordered by `self.ticker`,
   which is *narrower* than the list passed in and is only readable off the
   instance afterwards.
-* `RIM_PortOp.weight` already returns a labelled Series, and is the only one
-  that does.
+* `RIM_PortOp.weight` and `Icc_Mvo.weight` already return a labelled Series,
+  and are the only ones that do.
 
 The adapters here put all three on the Series convention and nothing else. They
 do not change any model's weighting rule; the one thing they do decide is EPO's
 scale, which the model genuinely leaves open -- see `normalise`.
 """
 import warnings
+from pathlib import Path
 import numpy as np
 import pandas as pd
+from constant import icc_weight_cap
 from ..EPO.model import EPO
 from ..PPP.model import PPP
+from ..ICC_MVO.model import Icc_Mvo
 from ..Proposed_Model.model import RIM_PortOp
+from ..Proposed_Model.utils.port_optimize import port_weight
 
 # Below this the normalising denominator is treated as zero rather than divided
 # by. A gross exposure this small means the solver returned essentially no
@@ -169,10 +173,49 @@ def ppp_weight (model: PPP, date: pd.Timestamp, tickers: list[str],
                      dtype=float).rename_axis('ticker')
 
 
+def icc_mvo_weight (date: pd.Timestamp, tickers: list[str],
+                    cap: float = icc_weight_cap, long_only: bool = True
+                    )-> pd.Series:
+    """Bielstein-Hanauer ICC-MVO weights at one formation date.
+
+    A pass-through, like `proposed_weight`: `Icc_Mvo.weight` already returns a
+    ticker-indexed Series summing to one. `Icc_Mvo.Config()` should have run
+    first, so the panels are built once rather than on the first date reached.
+
+    Args:
+        date (pd.Timestamp): Formation date.
+        tickers (list[str]): Candidate universe, narrowed by `Icc_Mvo` to the
+            names with a solvable implied cost of capital, 12-1 momentum and a
+            complete `constant.icc_cov_month` return history.
+        cap (float): Largest weight on one name. Defaults to
+            `constant.icc_weight_cap`, B&H's 5%; 1 removes it.
+        long_only (bool): B&H's long-only book. False solves the unconstrained
+            tangency portfolio instead, which takes no cap. Defaults to True.
+
+    Returns:
+        pd.Series: One weight per surviving ticker, summing to one. Names the
+            optimiser left under `constant.icc_weight_floor` are exactly 0.
+
+    Note:
+        **Lookahead.** The three explicit earnings years the implied cost of
+        capital is solved on are the *realised* ones, so the book formed at `t`
+        has seen EPS through `t + 3` years. It is a benchmark under perfect
+        earnings foresight, not a strategy -- see `Icc_Mvo`.
+
+    Example:
+        >>> Icc_Mvo.Config()
+        >>> w = icc_mvo_weight(pd.Timestamp('2020-06-30'), tickers)
+        >>> float(w.sum()), float(w.max()) <= 0.05
+        (1.0, True)
+    """
+    return Icc_Mvo(date, tickers).weight(cap=cap, long_only=long_only)
+
+
 def proposed_weight (date: pd.Timestamp, tickers: list[str],
                      n_samples: int = 10000, n_lags: int = 4,
                      ex_post: bool = False, common_theta: bool = True,
-                     seed: int|None = None, long_only: bool = True
+                     seed: int|None = None, long_only: bool = True,
+                     dump_dir: Path|None = None
                      )-> pd.Series:
     """Residual-income model weights at one formation date.
 
@@ -212,6 +255,18 @@ def proposed_weight (date: pd.Timestamp, tickers: list[str],
             backtest; `run` derives a per-date seed from it so that two
             formation dates do not draw the same paths. Defaults to None.
         long_only (bool): Bound weights to [0, 1]. Defaults to True.
+        dump_dir (Path | None): Write this date's simulated implied returns
+            here before optimising, as
+            `{historical|ex_post}_{YYYY-MM-DD}.csv` -- rows the simulation
+            index, columns the ticker, which is the transpose of what
+            `RIM_PortOp.joint_return` returns and the orientation a
+            column-masking subsample test wants. Defaults to None, i.e. no
+            file.
+
+            Costs no extra simulation. `RIM_PortOp.weight` computes the same
+            frame internally and discards it; this path keeps a reference and
+            calls `port_weight` on it directly, so the weights are identical
+            to the undumped call given the same seed.
 
     Returns:
         pd.Series: One weight per ticker, summing to one. A ticker whose
@@ -224,9 +279,26 @@ def proposed_weight (date: pd.Timestamp, tickers: list[str],
         1.0
     """
     model: RIM_PortOp = RIM_PortOp(date, tickers)
-    return model.weight(n_samples=n_samples, n_lags=n_lags, ex_post=ex_post,
-                        common_theta=common_theta, seed=seed,
-                        long_only=long_only).astype(float)
+    if dump_dir is None:
+        return model.weight(n_samples=n_samples, n_lags=n_lags, ex_post=ex_post,
+                            common_theta=common_theta, seed=seed,
+                            long_only=long_only).astype(float)
+
+    # `weight` is `joint_return` then `port_weight`. Inlining the two is what
+    # makes the dump free -- calling `joint_return` separately and then
+    # `weight` would simulate the whole universe twice.
+    return_df: pd.DataFrame = model.joint_return(
+        n_samples=n_samples, n_lags=n_lags, ex_post=ex_post,
+        common_theta=common_theta, seed=seed)
+    dump_dir = Path(dump_dir)
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    variant: str = 'ex_post' if ex_post else 'historical'
+    path: Path = dump_dir / f'{variant}_{pd.Timestamp(date).date()}.csv'
+    # Transposed on the way out only. `port_weight` reads the frame in
+    # `joint_return`'s own (ticker, simulation) orientation and would silently
+    # read a transposed one as a universe of 10,000 names.
+    return_df.T.to_csv(path, index_label='simulation')
+    return port_weight(return_df, long_only=long_only).astype(float)
 
 
 def equal_weight (date: pd.Timestamp, tickers: list[str])-> pd.Series:
