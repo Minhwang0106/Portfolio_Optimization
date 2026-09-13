@@ -2,34 +2,14 @@
 \begin{table}[htbp]
 \centering
 \footnotesize
-\caption{A thought experiment: terminal wealth against risk-adjusted performance.}
+\caption{A thought experiment: three tests, one dataset, three answers.}
 \label{tab:experiment}
 \begin{threeparttable}
 \begin{tabular}{lrrr}
 \toprule
- &  & {Asset A} & {Asset B} \\
-\midrule
-\multicolumn{4}{l}{\textit{Panel A: Asset characteristics}} \\
-Terminal wealth ($\times$) &  & 3.04 & 40.00 \\
-Annualised return, geometric (\%) &  & 10.63 & 39.84 \\
-Annualised volatility (\%) &  & 0.95 & 42.46 \\
-Maximum drawdown (\%) &  & 0.00 & 62.96 \\
-Worst month (\%) &  & 0.16 & -32.54 \\
-Sharpe ratio &  & 10.66 & 1.01 \\
-CRRA certainty equivalent (\%) &  & 10.61 & -4.96 \\
-\addlinespace
-\midrule
  & {Mean return} & {Sharpe ratio} & {CRRA CE} \\
 \midrule
-\multicolumn{4}{l}{\textit{Panel B: Difference tests, A minus B}} \\
-Difference & -32.77$^{**}$ & 9.69$^{***}$ & 15.57 \\
-$t$-statistic & -2.49 & 14.75 & 0.98 \\
-Bootstrap $p$-value & [0.010] & [0.000] & [0.362] \\
-\addlinespace
-\midrule
- & {Mean return} & {Sharpe ratio} & {CRRA CE} \\
-\midrule
-\multicolumn{4}{l}{\textit{Panel C: Distribution of $t$-statistics across realisations}} \\
+\multicolumn{4}{l}{\textit{Distribution of $t$-statistics across realisations}} \\
 Mean & -2.52 & 11.60 & 0.60 \\
 Standard deviation & 0.32 & 1.77 & 0.38 \\
 5th percentile & -2.99 & 8.92 & 0.01 \\
@@ -43,10 +23,9 @@ Reject at the 5\% level (\%) & 94.22 & 99.90 & 0.24 \\
 \bottomrule
 \end{tabular}
 \begin{tablenotes}[flushleft]\footnotesize
-\item Two synthetic assets over 132 months. A is Gaussian with a 10\% annual mean and 1\% volatility; B is Gaussian with a 40\% mean and 40\% volatility for 120 months, then set so that terminal wealth is exactly $40\times$ in every realisation. Panels B and C test A minus B.
-\item Panels A and B show one realisation (seed 0); Panel C the distribution of $t$-statistics over 10,000 realisations.
-\item CRRA utility uses $\gamma=5$. HAC standard errors (Andrews and Monahan, 1992); $p$-values from a studentized circular block bootstrap, block length 5, 4999 resamples (Ledoit and Wolf, 2008).
-\item $^{***}$, $^{**}$ and $^{*}$ denote significance at the 1\%, 5\% and 10\% levels.
+\item Two synthetic assets over 132 months, A minus B: A is Gaussian with a 10\% annual mean and 1\% volatility, a steady compounder; B is Gaussian with a 40\% mean and 40\% volatility for 120 months, then set so that terminal wealth is exactly $40\times$ in every realisation. A positive value favours the steadier asset.
+\item The distribution of $t$-statistics over 10,000 realisations of the pair; "reject" is against the null of no difference at the 5\% level.
+\item CRRA utility uses $\gamma=5$. Each realisation's $t$-statistic is diff / HAC standard error (Andrews and Monahan, 1992); no bootstrap runs per realisation.
 \end{tablenotes}
 \end{threeparttable}
 \end{table}

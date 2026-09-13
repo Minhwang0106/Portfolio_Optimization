@@ -1,11 +1,11 @@
 ,,Mean return,Sharpe ratio,CRRA CE
-Panel C: Distribution of $t$-statistics across realisations,Mean,-2.520811908135917,11.598119312551361,0.5992283935482834
-Panel C: Distribution of $t$-statistics across realisations,Standard deviation,0.3237197163046554,1.7670191037304672,0.3797086073900399
-Panel C: Distribution of $t$-statistics across realisations,5th percentile,-2.9900655516292005,8.916711834523136,0.011986478325089485
-Panel C: Distribution of $t$-statistics across realisations,Median,-2.5561907907718746,11.690912356374614,0.5844249988804249
-Panel C: Distribution of $t$-statistics across realisations,95th percentile,-1.9202529745045998,14.189211378932779,1.2380291498330005
-Panel C: Distribution of $t$-statistics across realisations,99th percentile,-1.5655934692335016,15.428725852781973,1.623741475114452
-Panel C: Distribution of $t$-statistics across realisations,Share with $t>0$ (%),0.0,1.0,0.9531
-Panel C: Distribution of $t$-statistics across realisations,Reject at the 5% level (%),0.9422,0.999,0.0024
-Panel C: Distribution of $t$-statistics across realisations,\quad in favour of A (%),0.0,0.999,0.0024
-Panel C: Distribution of $t$-statistics across realisations,\quad in favour of B (%),0.9422,0.0,0.0
+Distribution of $t$-statistics across realisations,Mean,-2.520811908135917,11.598119312551361,0.5992283935482834
+Distribution of $t$-statistics across realisations,Standard deviation,0.3237197163046554,1.7670191037304672,0.3797086073900399
+Distribution of $t$-statistics across realisations,5th percentile,-2.9900655516292005,8.916711834523136,0.011986478325089485
+Distribution of $t$-statistics across realisations,Median,-2.5561907907718746,11.690912356374614,0.5844249988804249
+Distribution of $t$-statistics across realisations,95th percentile,-1.9202529745045998,14.189211378932779,1.2380291498330005
+Distribution of $t$-statistics across realisations,99th percentile,-1.5655934692335016,15.428725852781973,1.623741475114452
+Distribution of $t$-statistics across realisations,Share with $t>0$ (%),0.0,1.0,0.9531
+Distribution of $t$-statistics across realisations,Reject at the 5% level (%),0.9422,0.999,0.0024
+Distribution of $t$-statistics across realisations,\quad in favour of A (%),0.0,0.999,0.0024
+Distribution of $t$-statistics across realisations,\quad in favour of B (%),0.9422,0.0,0.0
