@@ -43,11 +43,9 @@ Reject at the 5\% level (\%) & 94.22 & 99.90 & 0.24 \\
 \bottomrule
 \end{tabular}
 \begin{tablenotes}[flushleft]\footnotesize
-\item Two synthetic assets over 132 months. Asset A is Gaussian with a 10\% annual mean and 1\% annual volatility. Asset B is Gaussian with a 40\% annual mean and 40\% annual volatility for 120 months; its final 12 months are deterministic and set so that terminal wealth is exactly $40\times$ in every realisation.
-\item Panels A and B show one realisation (seed 0); Panel C establishes that it is typical over 10,000 of them. All differences are A minus B, so a positive value favours the steadier asset.
-\item In Panel B the mean return and certainty equivalent differences are in percentage points and the Sharpe ratio difference is in ratio units.
-\item Panel C is the point of the table. On identical data the Sharpe ratio test favours A in almost every realisation, the mean return test favours B in almost every realisation, and the certainty equivalent test separates them in fewer than one realisation in three hundred. The three statistics do not merely disagree about significance: two of them reject in opposite directions and the third cannot tell the assets apart. Which one a study reports is therefore not a presentational choice.
-\item One caveat on interpretation and one on inference. Asset B is Gaussian in simple returns, for which $E[(1+R)^{1-\gamma}]$ formally diverges at $R=-1$, so its population certainty equivalent does not exist. At this volatility a monthly return of $-100\%$ is roughly nine standard deviations away and is never drawn, so the sample estimate is well behaved and the column can be read as printed; at higher volatilities it cannot, and `distribution='lognormal'` is the specification to use then. Second, the final 12 observations are constant by construction, which violates the stationarity the HAC estimator and the block bootstrap assume; the effect sizes rather than the $p$-values are what this table is evidence for.
+\item Two synthetic assets over 132 months. A is Gaussian with a 10\% annual mean and 1\% volatility; B is Gaussian with a 40\% mean and 40\% volatility for 120 months, then set so that terminal wealth is exactly $40\times$ in every realisation. Panels B and C test A minus B.
+\item Panels A and B show one realisation (seed 0); Panel C the distribution of $t$-statistics over 10,000 realisations.
+\item CRRA utility uses $\gamma=5$. HAC standard errors (Andrews and Monahan, 1992); $p$-values from a studentized circular block bootstrap, block length 5, 4999 resamples (Ledoit and Wolf, 2008).
 \item $^{***}$, $^{**}$ and $^{*}$ denote significance at the 1\%, 5\% and 10\% levels.
 \end{tablenotes}
 \end{threeparttable}

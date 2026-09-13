@@ -7,39 +7,36 @@
 \begin{threeparttable}
 \begin{tabular}{lrrrrr}
 \toprule
- & {B\&H} & {Max Sharpe, B\&H $N$} & {CRRA, B\&H $N$} & {Max Sharpe, unconstrained} & {CRRA, unconstrained} \\
+ & {B\&H} & \begin{tabular}[b]{@{}r@{}}Max Sharpe\\B\&H $N$\end{tabular} & \begin{tabular}[b]{@{}r@{}}CRRA\\B\&H $N$\end{tabular} & \begin{tabular}[b]{@{}r@{}}Max Sharpe\\unconstrained\end{tabular} & \begin{tabular}[b]{@{}r@{}}CRRA\\unconstrained\end{tabular} \\
 \midrule
 \multicolumn{6}{l}{\textit{Panel A: Performance}} \\
-Annualised return (\%) & 16.62 & 15.07 & 26.18 & 15.00 & 41.20 \\
-Annualised volatility (\%) & 14.23 & 14.64 & 17.30 & 14.94 & 29.28 \\
-Maximum drawdown (\%) & 25.85 & 21.67 & 19.53 & 22.74 & 26.29 \\
-Sharpe ratio & 1.02 & 0.90 & 1.33 & 0.89 & 1.27 \\
-CRRA certainty equivalent (\%) & 11.56 & 10.18 & 18.92 & 9.91 & 21.30 \\
-Annualised turnover & 2.95 & 1.99 & 1.31 & 2.12 & 3.82 \\
-Average effective N & 22.01 & 33.63 & 21.87 & 29.11 & 1.94 \\
+Annualised return (\%) & 16.62 & 15.26 & 24.72 & 15.00 & 41.20 \\
+Annualised volatility (\%) & 14.23 & 14.37 & 16.99 & 14.94 & 29.28 \\
+Maximum drawdown (\%) & 25.85 & 20.09 & 19.53 & 22.74 & 26.29 \\
+Sharpe ratio & 1.02 & 0.93 & 1.28 & 0.89 & 1.27 \\
+CRRA certainty equivalent (\%) & 11.56 & 10.55 & 17.81 & 9.91 & 21.30 \\
+Annualised turnover & 2.95 & 1.90 & 1.26 & 2.12 & 3.82 \\
+Average effective N & 22.01 & 55.35 & 22.50 & 29.11 & 1.94 \\
 \addlinespace
 \midrule
- &  & {Max Sharpe, B\&H $N$} & {CRRA, B\&H $N$} & {Max Sharpe, unconstrained} & {CRRA, unconstrained} \\
+ &  & \begin{tabular}[b]{@{}r@{}}Max Sharpe\\B\&H $N$\end{tabular} & \begin{tabular}[b]{@{}r@{}}CRRA\\B\&H $N$\end{tabular} & \begin{tabular}[b]{@{}r@{}}Max Sharpe\\unconstrained\end{tabular} & \begin{tabular}[b]{@{}r@{}}CRRA\\unconstrained\end{tabular} \\
 \midrule
 \multicolumn{6}{l}{\textit{Panel B: Difference from B\&H}} \\
-Mean return (pp) &  & -1.32 & 8.46$^{***}$ & -1.33 & 22.54$^{***}$ \\
-\quad $t$-statistic &  & -0.53 & 2.89 & -0.50 & 3.12 \\
-\quad Bootstrap $p$-value &  & [0.714] & [0.001] & [0.707] & [0.000] \\
-Sharpe ratio &  & -0.12 & 0.31$^{*}$ & -0.14 & 0.25 \\
-\quad $t$-statistic &  & -0.56 & 1.38 & -0.61 & 0.79 \\
-\quad Bootstrap $p$-value &  & [0.684] & [0.090] & [0.704] & [0.207] \\
-CRRA certainty equivalent (pp) &  & -1.38 & 7.36$^{**}$ & -1.65 & 9.74 \\
-\quad $t$-statistic &  & -0.43 & 1.87 & -0.50 & 1.21 \\
-\quad Bootstrap $p$-value &  & [0.656] & [0.027] & [0.685] & [0.107] \\
+Mean return (pp) &  & -1.19 & 7.22$^{***}$ & -1.33 & 22.54$^{***}$ \\
+\quad $t$-statistic &  & -0.50 & 2.64 & -0.50 & 3.12 \\
+\quad Bootstrap $p$-value &  & [0.704] & [0.003] & [0.707] & [0.000] \\
+Sharpe ratio &  & -0.09 & 0.26 & -0.14 & 0.25 \\
+\quad $t$-statistic &  & -0.48 & 1.22 & -0.61 & 0.79 \\
+\quad Bootstrap $p$-value &  & [0.653] & [0.118] & [0.704] & [0.207] \\
+CRRA certainty equivalent (pp) &  & -1.01 & 6.25$^{**}$ & -1.65 & 9.74 \\
+\quad $t$-statistic &  & -0.33 & 1.70 & -0.50 & 1.21 \\
+\quad Bootstrap $p$-value &  & [0.617] & [0.042] & [0.685] & [0.107] \\
 \bottomrule
 \end{tabular}
 \begin{tablenotes}[flushleft]\footnotesize
-\item Sample 2015-02 to 2026-01 (132 monthly observations). Returns are net of 10~bps of one-way transaction cost. Every row is ex post: it is formed with accounting data realised after the formation date, so it is a benchmark under perfect foresight and not an implementable strategy.
-\item B\&H is the portfolio of Bielstein and Hanauer (2019): maximum Sharpe ratio on the implied cost of capital of Gebhardt, Lee and Swaminathan (2001) plus rescaled momentum, with a Ledoit--Wolf covariance and a 5\% cap per name. Its explicit earnings years are the realised ones over the same future window the proposed model's moments are drawn from.
-\item Every column after B\&H is the proposed model, solved on one set of simulated implied returns. Max Sharpe uses only their mean and covariance, through B\&H's own rule; CRRA uses the whole distribution. The B\&H $N$ columns are held, at each rebalance date, to at least B\&H's effective number of names at that date; the unconstrained columns are not, and CRRA unconstrained is the model as specified.
-\item Panel B reports each proposed row minus B\&H. All tests are one-sided and paired, $H_1$: the row exceeds its benchmark. Each is a delta method over sample moments with a prewhitened quadratic-spectral HAC long-run covariance (Andrews, 1991; Andrews and Monahan, 1992); the reported $p$-value is from a studentized circular block bootstrap with block length 5 and 4999 resamples (Ledoit and Wolf, 2008).
-\item Mean return and certainty equivalent differences are annualised, in percentage points; the Sharpe ratio difference is annualised, in ratio units. The certainty equivalent is the annualised certain return an investor with CRRA utility at $\gamma=5$ would accept in place of the realised series. Turnover is the annualised sum of absolute weight changes. Effective N is $1/\sum_i w_i^2$ averaged over months: the number of equally weighted holdings that would be as concentrated as the book.
-\item Panel B carries 12 tests; the notes on multiple testing in the text apply.
+\item Sample 2015-02 to 2026-01 (132 monthly observations). Bielstein and Hanauer (B\&H) against the proposed model, both formed with accounting data realised after the formation date: a perfect-foresight benchmark, not an implementable strategy. Panel B is each proposed column minus B\&H.
+\item B\&H: maximum Sharpe ratio on the implied cost of capital of Gebhardt, Lee and Swaminathan (2001) plus momentum, with a Ledoit--Wolf covariance and a 5\% cap per name. The other columns are the proposed model under a Max Sharpe or CRRA objective, either held to at least B\&H's effective number of names, $N=1/\sum_i w_i^2$, at each rebalance, or unconstrained.
+\item Returns are net of 10~bps one-way transaction cost; CRRA utility uses $\gamma=5$. Tests are one-sided and paired, $H_1$: the strategy beats its benchmark. HAC standard errors (Andrews and Monahan, 1992); $p$-values from a studentized circular block bootstrap, block length 5, 4999 resamples (Ledoit and Wolf, 2008).
 \item $^{***}$, $^{**}$ and $^{*}$ denote significance at the 1\%, 5\% and 10\% levels.
 \end{tablenotes}
 \end{threeparttable}

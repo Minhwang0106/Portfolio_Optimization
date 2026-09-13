@@ -1,10 +1,10 @@
 ,,,"Proposed, EPO $N$ $-$ EPO","Proposed, PPP $N$ $-$ PPP"
-Panel C: Difference from the matched comparator,mean_return,Mean return (pp),0.03987470733938371,0.02027263589870639
-Panel C: Difference from the matched comparator,mean_return,\quad $t$-statistic,1.6454382899442825,0.8919412560311853
-Panel C: Difference from the matched comparator,mean_return,\quad Bootstrap $p$-value,0.0344,0.1672
-Panel C: Difference from the matched comparator,sharpe,Sharpe ratio,0.18705644364781104,0.20398128963613035
-Panel C: Difference from the matched comparator,sharpe,\quad $t$-statistic,1.2221492905320017,1.423929235357392
-Panel C: Difference from the matched comparator,sharpe,\quad Bootstrap $p$-value,0.0938,0.0762
-Panel C: Difference from the matched comparator,crra_ce,CRRA certainty equivalent (pp),0.02700782248853595,0.05407678152166784
-Panel C: Difference from the matched comparator,crra_ce,\quad $t$-statistic,1.0798035330981852,1.3945357892915216
-Panel C: Difference from the matched comparator,crra_ce,\quad Bootstrap $p$-value,0.118,0.047
+Panel C: Difference from the matched comparator,mean_return,Mean return (pp),0.04091052957009285,0.0203180626557369
+Panel C: Difference from the matched comparator,mean_return,\quad $t$-statistic,1.711394113902692,0.939578908427654
+Panel C: Difference from the matched comparator,mean_return,\quad Bootstrap $p$-value,0.0282,0.1532
+Panel C: Difference from the matched comparator,sharpe,Sharpe ratio,0.19171477740050782,0.1855951890797685
+Panel C: Difference from the matched comparator,sharpe,\quad $t$-statistic,1.267821801595265,1.3996081885011185
+Panel C: Difference from the matched comparator,sharpe,\quad Bootstrap $p$-value,0.09,0.0804
+Panel C: Difference from the matched comparator,crra_ce,CRRA certainty equivalent (pp),0.027589446120649397,0.049975592901119636
+Panel C: Difference from the matched comparator,crra_ce,\quad $t$-statistic,1.1261302413280967,1.3735314762463717
+Panel C: Difference from the matched comparator,crra_ce,\quad Bootstrap $p$-value,0.1062,0.0502
