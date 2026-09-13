@@ -30,19 +30,6 @@ def _best_return_book (mu: np.ndarray, cap: float)-> np.ndarray:
     return weight
 
 
-def _broad_best_book (mu: np.ndarray, cap: float, n_eff: float)-> np.ndarray:
-    """Equal weight on the best names, as many as the cap and the breadth floor need.
-
-    `k` equal weights have an effective N of `k` and a largest weight of `1/k`,
-    so the smallest `k` with `k >= n_eff` and `1/k <= cap` satisfies both. A
-    feasible starting point for the solve, not its answer.
-    """
-    k: int = min(len(mu), int(np.ceil(max(n_eff, 1.0/cap)-1e-9)))
-    weight: np.ndarray = np.zeros(len(mu))
-    weight[np.argsort(-mu)[:k]] = 1.0/k
-    return weight
-
-
 def _floor_and_cap (weight: np.ndarray, cap: float, min_weight: float
                     )-> np.ndarray:
     """Zero the weights under `min_weight`, renormalise, and keep the cap exact.
@@ -89,10 +76,14 @@ def max_sharpe_weight (mu: np.ndarray, sigma: np.ndarray,
     is not concave, so solving it directly would leave the answer to the
     starting point; this form has one optimum. SLSQP with analytic gradients.
 
-    An effective-N floor passes through the same way. `sum(w^2) <= 1/N` with
-    `w = y / sum(y)` is `||y|| <= sum(y) / sqrt(N)`, a second-order cone, so
-    the program stays convex. It is written as the cone rather than squared:
-    the squared form is a difference of convex terms and not concave.
+    An effective-N floor is not a second constraint: it is folded into `cap`
+    before any of the above runs. `w_i <= 1/N` for every name forces
+    `sum(w^2) <= 1/N` (`w_i^2 <= w_i/N` term by term, and the weights sum to
+    one), so tightening the cap to `min(cap, 1/n_eff)` gives a book with an
+    effective N of at least `n_eff` -- B&H's own mechanism, sized to the
+    target breadth instead of a fixed percentage, solved by the exact same
+    program above with no branch of its own. It is a floor, not a match: the
+    realised effective N usually comes out above `n_eff`, not pinned to it.
 
     Args:
         mu (np.ndarray): Expected excess returns, shape (n,).
@@ -105,9 +96,9 @@ def max_sharpe_weight (mu: np.ndarray, sigma: np.ndarray,
             `Sigma^-1 mu` scaled to sum to one, which takes no cap. Defaults
             to True.
         n_eff (float | None): Smallest effective number of names, `1 /
-            sum(w^2)`. None leaves breadth to the cap alone, B&H's rule. At or
-            above `len(mu)` the only feasible book is equal weight, returned
-            without solving. Long-only only. Defaults to None.
+            sum(w^2)`. Tightens the cap to `min(cap, 1/n_eff)` before solving;
+            None leaves `cap` as given, B&H's rule. Long-only only. Defaults
+            to None.
 
     Returns:
         np.ndarray: Weights summing to one, in `mu`'s order.
@@ -115,10 +106,11 @@ def max_sharpe_weight (mu: np.ndarray, sigma: np.ndarray,
     Raises:
         ValueError: If no capped long-only book has a positive expected excess
             return (so none has a positive Sharpe ratio to maximise); if there
-            are too few names to be fully invested under the cap; if the
-            unconstrained tangency portfolio has a non-positive sum; if `n_eff`
-            is given without `long_only`; or if the solver does not converge.
-            `engine.backtest` holds the previous book on any of these.
+            are too few names to be fully invested under the (possibly
+            `n_eff`-tightened) cap; if the unconstrained tangency portfolio
+            has a non-positive sum; if `n_eff` is given without `long_only`;
+            or if the solver does not converge. `engine.backtest` holds the
+            previous book on any of these.
 
     Example:
         >>> max_sharpe_weight(np.array([0.01, 0.02]), np.diag([0.04, 0.04]),
@@ -141,13 +133,11 @@ def max_sharpe_weight (mu: np.ndarray, sigma: np.ndarray,
                              'non-positive number; it has no fully invested '
                              'form')
         return raw/raw.sum()
+    if n_eff is not None:
+        cap = min(cap, 1.0/float(n_eff))
     if cap*n < 1-1e-12:
         raise ValueError(f'{n} names cannot make a fully invested book under a '
                          f'{cap:.2%} cap')
-    if n_eff is not None and n_eff >= n:
-        # Equal weight is the only book this broad, and SLSQP does not reliably
-        # land on a feasible set squeezed down to one point.
-        return np.full(n, 1.0/n)
     if not (mu > 0).any():
         raise ValueError('no long-only book has a positive expected excess '
                          'return')
@@ -158,14 +148,11 @@ def max_sharpe_weight (mu: np.ndarray, sigma: np.ndarray,
     # otherwise leave `y` in the hundreds.
     m: np.ndarray = mu/np.abs(mu).max()
     s: np.ndarray = sigma/np.diag(sigma).mean()
-    breadth: float|None = None if n_eff is None else min(float(n_eff), n)
-    start: np.ndarray = (_best_return_book(m, cap) if breadth is None
-                         else _broad_best_book(m, cap, breadth))
+    start: np.ndarray = _best_return_book(m, cap)
     lead: float = float(m@start)
     if not lead > 0:
         raise ValueError('no long-only book has a positive expected excess '
-                         'return' + ('' if breadth is None
-                                     else f' at an effective N of {breadth:g}'))
+                         f'return under a {cap:.2%} cap')
 
     constraints: list[dict] = [{'type': 'eq', 'fun': lambda y: m@y-1.0,
                                 'jac': lambda y: m}]
@@ -174,14 +161,6 @@ def max_sharpe_weight (mu: np.ndarray, sigma: np.ndarray,
         bound: np.ndarray = cap*np.ones((n, n))-np.eye(n)
         constraints.append({'type': 'ineq', 'fun': lambda y: bound@y,
                             'jac': lambda y: bound})
-    if breadth is not None:
-        # sum(y)/sqrt(N) - ||y|| >= 0. `m'y = 1` keeps y off the origin, where
-        # the norm's gradient would be undefined.
-        root: float = float(np.sqrt(breadth))
-        constraints.append({
-            'type': 'ineq',
-            'fun': lambda y: y.sum()/root-np.linalg.norm(y),
-            'jac': lambda y: np.ones_like(y)/root-y/np.linalg.norm(y)})
     res = minimize(lambda y: y@s@y, start/lead, jac=lambda y: 2.0*(s@y),
                    method='SLSQP', bounds=[(0.0, None)]*n,
                    constraints=constraints,

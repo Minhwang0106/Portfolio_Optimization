@@ -112,12 +112,16 @@ def port_weight (return_arr:np.ndarray|pd.DataFrame,
         long_only (bool): Bound weights to [0, 1] rather than leaving them free.
             Defaults to True.
         n_eff (float | None): Smallest effective number of names the book may
-            have, `1 / sum(w^2)`, imposed as `sum(w^2) <= 1 / n_eff` -- convex
-            for a long-only book summing to one, and satisfied by the
-            equal-weight starting point. None leaves breadth free, the model as
-            specified. At or above the number of usable tickers the only
-            feasible book is equal weight, which is returned without solving.
-            Defaults to None.
+            have, `1 / sum(w^2)`. Enforced as a per-name cap, `w_i <= 1/n_eff`
+            for every ticker -- the same device B&H's own weight cap is, sized
+            to the target breadth rather than a fixed percentage. `w_i <= c`
+            for every `i`, with the book summing to one, forces `sum(w^2) <=
+            c` (`w_i^2 <= c*w_i` term by term), so the realised effective N is
+            at least `n_eff`; it is a floor, not a match, so the realised
+            value usually comes out above the target rather than at it. None
+            leaves breadth free, the model as specified. At or above the
+            number of usable tickers the only feasible book is equal weight,
+            which is returned without solving. Defaults to None.
 
     Returns:
         pd.Series: One weight per ticker, indexed by ticker when the input
@@ -139,6 +143,7 @@ def port_weight (return_arr:np.ndarray|pd.DataFrame,
 
     constrains: list[dict] = [{'type':'eq', 'fun': lambda w: np.sum(w)-1,
                                'jac': lambda w: np.ones_like(w)}]
+    cap: float = 1.0
     if n_eff is not None:
         if not long_only:
             raise ValueError('the effective-N floor is only defined here for '
@@ -149,12 +154,10 @@ def port_weight (return_arr:np.ndarray|pd.DataFrame,
             out: pd.Series = pd.Series(0.0,index=labels)
             out.loc[labels[keep]] = 1.0/n_tickers
             return out
-        max_hhi: float = 1.0/float(n_eff)
-        constrains.append({'type':'ineq', 'fun': lambda w: max_hhi-w@w,
-                           'jac': lambda w: -2.0*w})
+        cap = 1.0/float(n_eff)
 
     if long_only:
-        bounds: list[tuple] = [(0,1) for _ in range(n_tickers)]
+        bounds: list[tuple] = [(0,cap) for _ in range(n_tickers)]
     else:
         bounds: list[tuple] = [(None,None) for _ in range(n_tickers)]
     weight: np.ndarray = np.ones(shape=(n_tickers))/n_tickers

@@ -100,10 +100,12 @@ leaves it long-only, as B&H state it.
 maximum-Sharpe rule on the simulation's mean and covariance with no breadth
 floor; the other four are matched rows. Each reads the
 proposed model's saved simulated implied returns (`--dump-implied-return`, read
-back from `--replay-dir`) and solves again with a breadth floor
-`sum(w^2) <= 1/N`, where `N` is the comparator's effective N in the book it
-held at that date -- read date by date, never the full-sample average, which
-is known only at the end of the sample. `proposed_ex_post_msr_icc_n` swaps the
+back from `--replay-dir`) and solves again with a breadth floor: every name
+capped at `1/N`, where `N` is the comparator's effective N in the book it held
+at that date -- read date by date, never the full-sample average, which is
+known only at the end of the sample. The cap is B&H's own device, sized to
+`N` instead of a fixed percentage; a book with no weight above `1/N` has an
+effective N of at least `N`. `proposed_ex_post_msr_icc_n` swaps the
 objective as well: B&H's maximum-Sharpe rule on the simulation's mean and
 covariance, so it differs from B&H in its inputs and from
 `proposed_ex_post_icc_n` in its objective. Each needs its comparator's weights,
