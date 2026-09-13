@@ -227,6 +227,21 @@ def _pad (cells: list[str], n_col: int)-> str:
     return ' & '.join(['']*(n_col-len(cells))+cells)
 
 
+def _header (label: str)-> str:
+    """A column header, stacked onto two lines at its first comma.
+
+    A one-line header makes its column as wide as the whole label, and at five
+    or six labels like 'Max Sharpe, unconstrained' the tabular runs off the
+    page. Stacking halves that width. A nested `tabular` does the stacking so no
+    package beyond the two the module promises is needed.
+    """
+    text: str = _escape(label)
+    if ', ' not in text:
+        return f'{{{text}}}'
+    top, bottom = text.split(', ', 1)
+    return f'\\begin{{tabular}}[b]{{@{{}}r@{{}}}}{top}\\\\{bottom}\\end{{tabular}}'
+
+
 def _block_lines (frame: pd.DataFrame, kinds: pd.Series|pd.DataFrame,
                   stars: pd.DataFrame|None, n_col: int)-> list[str]:
     """One block's column header, panel titles and data rows.
@@ -243,7 +258,7 @@ def _block_lines (frame: pd.DataFrame, kinds: pd.Series|pd.DataFrame,
         list[str]: Rows only -- the caller owns `tabular` and the rules.
     """
     kind_of: pd.DataFrame = _kind_frame(kinds, frame)
-    header: list[str] = [f'{{{_escape(str(c))}}}' for c in frame.columns]
+    header: list[str] = [_header(str(c)) for c in frame.columns]
     lines: list[str] = [' & '+_pad(header, n_col)+r' \\', '\\midrule']
 
     panelled: bool = isinstance(frame.index, pd.MultiIndex)
@@ -578,25 +593,18 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
                                         index_col=0, parse_dates=True)
     period: str = _period(returns)
     n_month: int = len(returns)
-    common: str = (f'Sample {period} ({n_month} monthly observations). '
-                   f'Returns are net of {backtest_cost_bps:.0f}~bps of '
-                   f'one-way transaction cost.')
-    tests_note: str = (
-        'All tests are one-sided and paired, $H_1$: the row exceeds its '
-        'benchmark. Each is a delta method over sample moments with a '
-        'prewhitened quadratic-spectral HAC long-run covariance (Andrews, '
-        '1991; Andrews and Monahan, 1992); the reported $p$-value is from a '
-        'studentized circular block bootstrap with block length 5 and '
-        f'{n_boot} resamples (Ledoit and Wolf, 2008).')
-    units_note: str = (
-        'Mean return and certainty equivalent differences are annualised, in '
-        'percentage points; the Sharpe ratio difference is annualised, in '
-        'ratio units. The certainty equivalent is the annualised certain '
-        f'return an investor with CRRA utility at $\\gamma={gamma:g}$ would '
-        'accept in place of the realised series. Turnover is the annualised '
-        'sum of absolute weight changes. Effective N is $1/\\sum_i w_i^2$ '
-        'averaged over months: the number of equally weighted holdings that '
-        'would be as concentrated as the book.')
+    # Notes carry three things only: what the table shows, what its columns
+    # are, and the discretionary choices behind the numbers. Interpretation
+    # belongs in the text.
+    common: str = f'Sample {period} ({n_month} monthly observations).'
+    inference: str = (
+        'HAC standard errors (Andrews and Monahan, 1992); $p$-values from a '
+        f'studentized circular block bootstrap, block length 5, {n_boot} '
+        'resamples (Ledoit and Wolf, 2008).')
+    choices: str = (
+        f'Returns are net of {backtest_cost_bps:.0f}~bps one-way transaction '
+        f'cost; CRRA utility uses $\\gamma={gamma:g}$. Tests are one-sided and '
+        'paired, $H_1$: the strategy beats its benchmark. '+inference)
     stars_note: str = ('$^{***}$, $^{**}$ and $^{*}$ denote significance at '
                        'the 1\\%, 5\\% and 10\\% levels.')
 
@@ -606,33 +614,25 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
                                 seed=seed)
         for name, (frame, _, _) in ex_post.items():
             _write(frame, f'table1_ex_post_{name}')
-        n_test: int = 3*len(ex_post['tests'][0].columns)
         _write_tex(render_latex(
             [ex_post['performance'], ex_post['tests']],
             caption='Ex post: Bielstein and Hanauer against the proposed '
                     'model.',
             label='tab:ex_post',
             notes=[
-                common+' Every row is ex post: it is formed with accounting '
-                'data realised after the formation date, so it is a benchmark '
-                'under perfect foresight and not an implementable strategy.',
-                'B\\&H is the portfolio of Bielstein and Hanauer (2019): '
-                'maximum Sharpe ratio on the implied cost of capital of '
-                'Gebhardt, Lee and Swaminathan (2001) plus rescaled momentum, '
-                'with a Ledoit--Wolf covariance and a 5\\% cap per name. Its '
-                'explicit earnings years are the realised ones over the same '
-                "future window the proposed model's moments are drawn from.",
-                'Every column after B\\&H is the proposed model, solved on one '
-                'set of simulated implied returns. Max Sharpe uses only their '
-                'mean and covariance, through B\\&H\'s own rule; CRRA uses the '
-                "whole distribution. The B\\&H $N$ columns are held, at each "
-                "rebalance date, to at least B\\&H's effective number of names "
-                'at that date; the unconstrained columns are not, and CRRA '
-                'unconstrained is the model as specified.',
-                'Panel B reports each proposed row minus B\\&H. '+tests_note,
-                units_note,
-                f'Panel B carries {n_test} tests; the notes on multiple '
-                'testing in the text apply.',
+                common+' Bielstein and Hanauer (B\\&H) against the proposed '
+                'model, both formed with accounting data realised after the '
+                'formation date: a perfect-foresight benchmark, not an '
+                'implementable strategy. Panel B is each proposed column '
+                'minus B\\&H.',
+                'B\\&H: maximum Sharpe ratio on the implied cost of capital of '
+                'Gebhardt, Lee and Swaminathan (2001) plus momentum, with a '
+                'Ledoit--Wolf covariance and a 5\\% cap per name. The other '
+                'columns are the proposed model under a Max Sharpe or CRRA '
+                'objective, either held to at least B\\&H\'s effective number '
+                'of names, $N=1/\\sum_i w_i^2$, at each rebalance, or '
+                'unconstrained.',
+                choices,
                 stars_note]),
             'table1_ex_post')
     else:
@@ -646,27 +646,21 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
                                       n_boot=n_boot, seed=seed)
         for name, (frame, _, _) in historical.items():
             _write(frame, f'table2_historical_{name}')
-        n_test = 3*sum(len(block[0].columns)
-                       for name, block in historical.items()
-                       if name != 'performance')
         _write_tex(render_latex(
             list(historical.values()),
             caption='Historical: the proposed model against equal weight, EPO '
                     'and PPP.',
             label='tab:historical',
             notes=[
-                common+' The proposed model elicits its moments from the '
-                'training window only, so every row is implementable.',
-                'The EPO $N$ and PPP $N$ rows hold the proposed model, at each '
-                "rebalance date, to that comparator's effective number of "
-                'names at that date; the unconstrained row is the model as '
-                'specified.',
-                'Panel B reports each strategy minus equal weight; Panel C '
-                'each matched row minus the comparator whose breadth it '
-                'holds. '+tests_note,
-                units_note,
-                f'Panels B and C carry {n_test} tests; the notes on multiple '
-                'testing in the text apply.',
+                common+' The proposed model against equal weight, EPO and '
+                'PPP, all using the training window only, so every column is '
+                'implementable. Panel B is each strategy minus equal weight; '
+                'Panel C each matched column minus its comparator.',
+                'Proposed, EPO $N$ and PPP $N$: the proposed model held to at '
+                "least that comparator's effective number of names, "
+                '$N=1/\\sum_i w_i^2$, at each rebalance. Proposed, '
+                'unconstrained: no such floor.',
+                choices,
                 stars_note]),
             'table2_historical')
     else:
@@ -684,44 +678,16 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
                     'risk-adjusted performance.',
             label='tab:experiment',
             notes=[
-                'Two synthetic assets over 132 months. Asset A is Gaussian '
-                'with a 10\\% annual mean and 1\\% annual volatility. Asset B '
-                'is Gaussian with a 40\\% annual mean and 40\\% annual '
-                'volatility for 120 months; its final 12 months are '
-                'deterministic and set so that terminal wealth is exactly '
-                '$40\\times$ in every realisation.',
+                'Two synthetic assets over 132 months. A is Gaussian with a '
+                '10\\% annual mean and 1\\% volatility; B is Gaussian with a '
+                '40\\% mean and 40\\% volatility for 120 months, then set so '
+                'that terminal wealth is exactly $40\\times$ in every '
+                'realisation. Panels B and C test A minus B.',
                 f'Panels A and B show one realisation (seed {seed}); Panel C '
-                f'establishes that it is typical over {n_sim:,} of them. All '
-                'differences are A minus B, so a positive value favours the '
-                'steadier asset.',
-                'In Panel B the mean return and certainty equivalent '
-                'differences are in percentage points and the Sharpe ratio '
-                'difference is in ratio units.',
-                'Panel C is the point of the table. On identical data the '
-                'Sharpe ratio test favours A in almost every realisation, the '
-                'mean return test favours B in almost every realisation, and '
-                'the certainty equivalent test separates them in fewer than '
-                'one realisation in three hundred. The three statistics do '
-                'not merely disagree about significance: two of them reject '
-                'in opposite directions and the third cannot tell the assets '
-                'apart. Which one a study reports is therefore not a '
-                'presentational choice.',
-                'One caveat on interpretation and one on inference. Asset B '
-                'is Gaussian in simple returns, for which '
-                '$E[(1+R)^{1-\\gamma}]$ formally diverges at $R=-1$, so its '
-                'population certainty equivalent does not exist. At this '
-                'volatility a monthly return of $-100\\%$ is roughly nine '
-                'standard deviations away and is never drawn, so the sample '
-                'estimate is well behaved and the column can be read as '
-                'printed; at higher volatilities it cannot, and '
-                '`distribution=\'lognormal\'` is the specification to use '
-                'then. Second, the final 12 observations are constant by '
-                'construction, which violates the stationarity the HAC '
-                'estimator and the block bootstrap assume; the effect sizes '
-                'rather than the $p$-values are what this table is evidence '
-                'for.',
-                '$^{***}$, $^{**}$ and $^{*}$ denote significance at the 1\\%, '
-                '5\\% and 10\\% levels.']),
+                f'the distribution of $t$-statistics over {n_sim:,} '
+                'realisations.',
+                f'CRRA utility uses $\\gamma={gamma:g}$. '+inference,
+                stars_note]),
             'table3_experiment')
     return written
 
