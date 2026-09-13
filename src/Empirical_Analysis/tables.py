@@ -25,7 +25,9 @@ The three tables:
   proposed model at EPO's breadth, at PPP's, and unconstrained. Panel A the
   levels, Panel B every row minus equal weight, Panel C each matched row minus
   the comparator whose breadth it holds.
-* **Table 3** -- the thought experiment of `experiment_thought`, unchanged.
+* **Table 3** -- the thought experiment of `experiment_thought`: the Monte
+  Carlo distribution of the disagreement between the three tests, one panel,
+  the one-realisation illustration having been dropped as clutter.
 
 Every difference test in Tables 1 and 2 is one-sided, `H1`: the row beats its
 benchmark -- the question the paper puts to each comparison, fixed before the
@@ -122,21 +124,19 @@ DIFFERENCE_ROWS: tuple[tuple[str, str, str], ...] = (
 T_ROW: str = '\\quad $t$-statistic'
 P_ROW: str = '\\quad Bootstrap $p$-value'
 
-# Table 3's test panels, in the same order.
+# Table 3's three statistics, in the same order as `DIFFERENCE_ROWS`; `order`
+# is all `table_experiment` reads from this, the single realisation it once
+# also labelled having been dropped (see PANEL_MONTE).
 TEST_PANEL: tuple[tuple[str, str, str], ...] = (
     ('mean_return', 'Panel A: Mean return', 'pct'),
     ('sharpe', 'Panel B: Sharpe ratio', 'num'),
     ('crra_ce', 'Panel C: CRRA certainty equivalent', 'pct'))
-DIFFERENCE: str = 'Difference'
-T_STAT: str = '$t$-statistic'
-P_VALUE: str = 'Bootstrap $p$-value'
 
-# Table 3's panels carry different columns from each other, so they are three
-# tabulars in one float rather than one frame; the panel name has to travel
-# with each of them.
-PANEL_ASSETS: str = 'Panel A: Asset characteristics'
-PANEL_TESTS: str = 'Panel B: Difference tests, A minus B'
-PANEL_MONTE: str = 'Panel C: Distribution of $t$-statistics across realisations'
+# Table 3 is one panel: the Monte Carlo distribution is the point of the
+# table (see `experiment_thought`'s docstring), and the one-realisation
+# illustration it used to sit beside was dropped as clutter. No "Panel" or
+# letter, since there is only the one.
+PANEL_MONTE: str = 'Distribution of $t$-statistics across realisations'
 
 STAR_LEVEL: tuple[tuple[float, str], ...] = ((0.01, '***'), (0.05, '**'),
                                              (0.10, '*'))
@@ -462,64 +462,32 @@ def table_historical (summary: pd.DataFrame, returns: pd.DataFrame,
     return blocks
 
 
-def table_experiment (seed: int = 0, n_sim: int = 10000,
-                      gamma: float = thought.GAMMA, n_boot: int = 4999,
+def table_experiment (n_sim: int = 10000, gamma: float = thought.GAMMA,
                       distribution: str = 'gaussian'
                       )-> dict[str, tuple[pd.DataFrame, pd.Series,
                                           pd.DataFrame|None]]:
-    """Table 3: the thought experiment, as three panels of different shapes.
+    """Table 3: the Monte Carlo distribution the thought experiment turns on.
 
-    Panel A has two columns (the assets) and Panels B and C have three (the
-    tests), which is why this returns a dict of blocks rather than one frame.
+    The one-realisation illustration -- the two assets' own numbers, and the
+    single difference test built from them -- used to sit in front of this as
+    two more panels, and took a `seed` and an `n_boot` to build. Dropped: the
+    Monte Carlo distribution is the point of the table (see
+    `experiment_thought`'s docstring), the pair's construction is stated in
+    the table notes, and `experiment_thought`'s own CLI still prints one
+    realisation for anyone who wants to see it directly. `run_monte_carlo`
+    takes no seed of its own -- each of its `n_sim` realisations seeds
+    itself off its own index -- and defaults its per-realisation bootstrap
+    off, one HAC $t$-statistic being the point of each draw.
 
     Returns:
-        dict: `'assets'`, `'tests'` and `'montecarlo'`, each a
-            `(frame, kinds, stars)` triple ready for `render_latex`.
+        dict: `'montecarlo'` alone, a `(frame, kinds, stars)` triple ready
+            for `render_latex`. Still a dict, so a caller iterating blocks
+            does not need to change.
     """
-    table, tests, _ = thought.run_single(seed=seed, gamma=gamma,
-                                         n_boot=n_boot,
-                                         distribution=distribution)
-    asset_rows: dict[str, tuple[str, str]] = {
-        # The multiplication sign lives in the label, not the cell: a trailing
-        # `$\times$` would push the number left of the column's other entries.
-        'terminal_wealth': ('Terminal wealth ($\\times$)', 'num'),
-        'ann_return_geom': ('Annualised return, geometric (%)', 'pct'),
-        'ann_vol': ('Annualised volatility (%)', 'pct'),
-        'max_drawdown': ('Maximum drawdown (%)', 'pct'),
-        'worst_month': ('Worst month (%)', 'pct'),
-        'sharpe': ('Sharpe ratio', 'num'),
-        'ann_crra_ce': ('CRRA certainty equivalent (%)', 'pct')}
-    assets: pd.DataFrame = table.loc[list(asset_rows)]
-    assets.index = pd.MultiIndex.from_tuples(
-        [(PANEL_ASSETS, asset_rows[r][0]) for r in assets.index])
-    assets.columns = ['Asset A', 'Asset B']
-    asset_kind: pd.Series = pd.Series(
-        {(PANEL_ASSETS, asset_rows[r][0]): asset_rows[r][1]
-         for r in asset_rows})
-
     test_label: dict[str, str] = {'mean_return': 'Mean return',
                                   'sharpe': 'Sharpe ratio',
                                   'crra_ce': 'CRRA CE'}
     order: list[str] = [k for k, _, _ in TEST_PANEL]
-    single: pd.DataFrame = pd.DataFrame({
-        DIFFERENCE: tests.loc['diff', order],
-        T_STAT: tests.loc['t_stat', order],
-        P_VALUE: tests.loc['pval_boot', order]}).T
-    single.columns = [test_label[c] for c in single.columns]
-    single.index = pd.MultiIndex.from_tuples(
-        [(PANEL_TESTS, r) for r in single.index])
-    single_star: pd.DataFrame = pd.DataFrame(
-        '', index=single.index, columns=single.columns)
-    single_star.loc[(PANEL_TESTS, DIFFERENCE)] = [
-        _stars(tests.at['pval_boot', k]) for k in order]
-    # The `Difference` row is the one place a single row carries three
-    # different units: percentage points, ratio, percentage points. Every other
-    # row here is uniform, so only this one needs the per-cell form.
-    single_kind: pd.DataFrame = pd.DataFrame(
-        {label: {(PANEL_TESTS, DIFFERENCE): kind,
-                 (PANEL_TESTS, T_STAT): 'num',
-                 (PANEL_TESTS, P_VALUE): 'pval'}
-         for (key, _, kind), label in zip(TEST_PANEL, single.columns)})
 
     draws: pd.DataFrame = thought.run_monte_carlo(
         n_sim=n_sim, gamma=gamma, distribution=distribution)
@@ -542,9 +510,7 @@ def table_experiment (seed: int = 0, n_sim: int = 10000,
     monte_kind: pd.Series = pd.Series(
         {(PANEL_MONTE, mc_rows[r][0]): mc_rows[r][1] for r in mc_rows})
 
-    return {'assets': (assets, asset_kind, None),
-            'tests': (single, single_kind, single_star),
-            'montecarlo': (monte, monte_kind, None)}
+    return {'montecarlo': (monte, monte_kind, None)}
 
 
 def _period (returns: pd.DataFrame)-> str:
@@ -564,7 +530,7 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
         raw_dir (Path): A directory `run.save` has written.
         processed_dir (Path): Where the CSV form goes.
         latex_dir (Path): Where the `.tex` form goes.
-        n_sim (int): Monte Carlo realisations for Table 3's Panel C.
+        n_sim (int): Monte Carlo realisations behind Table 3.
         n_boot (int): Bootstrap resamples for every test.
         gamma (float): Relative risk aversion for the CE test.
         seed (int): Seeds every bootstrap and Table 3's shown realisation.
@@ -668,26 +634,27 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
                       'column to test against.', RuntimeWarning)
 
     if not skip_experiment:
-        blocks: dict = table_experiment(seed=seed, n_sim=n_sim, gamma=gamma,
-                                        n_boot=n_boot)
+        blocks: dict = table_experiment(n_sim=n_sim, gamma=gamma)
         for name, (frame, _, _) in blocks.items():
             _write(frame, f'table3_experiment_{name}')
         _write_tex(render_latex(
-            [blocks['assets'], blocks['tests'], blocks['montecarlo']],
-            caption='A thought experiment: terminal wealth against '
-                    'risk-adjusted performance.',
+            [blocks['montecarlo']],
+            caption='A thought experiment: three tests, one dataset, three '
+                    'answers.',
             label='tab:experiment',
             notes=[
-                'Two synthetic assets over 132 months. A is Gaussian with a '
-                '10\\% annual mean and 1\\% volatility; B is Gaussian with a '
-                '40\\% mean and 40\\% volatility for 120 months, then set so '
-                'that terminal wealth is exactly $40\\times$ in every '
-                'realisation. Panels B and C test A minus B.',
-                f'Panels A and B show one realisation (seed {seed}); Panel C '
-                f'the distribution of $t$-statistics over {n_sim:,} '
-                'realisations.',
-                f'CRRA utility uses $\\gamma={gamma:g}$. '+inference,
-                stars_note]),
+                'Two synthetic assets over 132 months, A minus B: A is '
+                'Gaussian with a 10\\% annual mean and 1\\% volatility, a '
+                'steady compounder; B is Gaussian with a 40\\% mean and '
+                '40\\% volatility for 120 months, then set so that terminal '
+                'wealth is exactly $40\\times$ in every realisation. A '
+                'positive value favours the steadier asset.',
+                f'The distribution of $t$-statistics over {n_sim:,} '
+                'realisations of the pair; "reject" is against the null of '
+                'no difference at the 5\\% level.',
+                f'CRRA utility uses $\\gamma={gamma:g}$. Each realisation\'s '
+                '$t$-statistic is diff / HAC standard error (Andrews and '
+                'Monahan, 1992); no bootstrap runs per realisation.']),
             'table3_experiment')
     return written
 
@@ -699,7 +666,7 @@ def _cli ()-> argparse.Namespace:
                         default=PROCESSED_BACKTEST_DIR)
     parser.add_argument('--latex', type=Path, default=LATEX_DIR)
     parser.add_argument('--n-sim', type=int, default=10000,
-                        help="realisations behind Table 3's Panel C")
+                        help="realisations behind Table 3's Monte Carlo")
     parser.add_argument('--n-boot', type=int, default=4999)
     parser.add_argument('--gamma', type=float, default=risk_aversion)
     parser.add_argument('--seed', type=int, default=0)
