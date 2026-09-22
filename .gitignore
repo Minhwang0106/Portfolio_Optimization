@@ -6,7 +6,12 @@ build/
 dist/
 # Collected/generated, not source: rebuild with `python -m src.Data.run`.
 # daily_price.csv alone runs >100MB, over GitHub's per-file limit.
-Data/raw file/
+# `/*`, not the directory itself: git cannot re-include a file whose parent
+# directory is excluded. The three kept files are inputs nothing fetches.
+Data/raw file/*
+!Data/raw file/sp_500_historical_components.csv
+!Data/raw file/monthly_FF5.csv
+!Data/raw file/daily_FF5.csv
 .obsidian/
 .vscode/
 Instruction/
@@ -21,5 +26,5 @@ Temporary/
 # `--dump-implied-return`. Regenerate rather than commit.
 Data/Result/implied_return/
 Discussion/
-Code_graph/
+code_review/
 test.py
