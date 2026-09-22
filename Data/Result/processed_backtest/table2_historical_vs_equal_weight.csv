@@ -1,10 +1,10 @@
 ,,,EPO,PPP,"Proposed, EPO $N$","Proposed, PPP $N$","Proposed, unconstrained"
 Panel B: Difference from equal weight,mean_return,Mean return (pp),-0.03596351499637068,-0.011032530521256023,0.00494701457372216,0.009285532134480877,-0.00073063125225592
-Panel B: Difference from equal weight,mean_return,\quad $t$-statistic,-1.4253460646233687,-0.6171033485450537,0.3032409162612454,0.8183242728993119,-0.013462159773814462
+Panel B: Difference from equal weight,mean_return,\quad $t$-statistic,-1.4253460646233667,-0.6171033485450539,0.3032409162612454,0.8183242728993126,-0.013462159773814457
 Panel B: Difference from equal weight,mean_return,\quad Bootstrap $p$-value,0.957,0.739,0.382,0.2052,0.5002
 Panel B: Difference from equal weight,sharpe,Sharpe ratio,-0.13112523295725462,-0.12556503854392365,0.06058954444325319,0.06003015053584485,-0.23429951938761348
-Panel B: Difference from equal weight,sharpe,\quad $t$-statistic,-0.8421506973441997,-1.2717204708341587,0.5079836778454946,0.7735121191904856,-0.9074713033954349
+Panel B: Difference from equal weight,sharpe,\quad $t$-statistic,-0.8421506973442019,-1.2717204708341574,0.5079836778454944,0.7735121191904829,-0.9074713033954346
 Panel B: Difference from equal weight,sharpe,\quad Bootstrap $p$-value,0.8128,0.8942,0.2906,0.2146,0.7996
 Panel B: Difference from equal weight,crra_ce,CRRA certainty equivalent (pp),-0.012900702642899997,-0.0374095988560148,0.0146887434777494,0.012565994045104834,-0.09230123514699262
-Panel B: Difference from equal weight,crra_ce,\quad $t$-statistic,-0.4955684447668837,-1.4353532345595874,0.5964964080966869,0.8052621769818858,-1.6167507974353175
+Panel B: Difference from equal weight,crra_ce,\quad $t$-statistic,-0.49556844476688333,-1.435353234559596,0.596496408096688,0.8052621769818795,-1.6167507974353172
 Panel B: Difference from equal weight,crra_ce,\quad Bootstrap $p$-value,0.7048,0.945,0.2442,0.1918,0.9296

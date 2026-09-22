@@ -1,0 +1,10 @@
+,,,Max Sharpe,Quadratic Utility,CRRA
+"Panel B: Difference from B&H, Max Sharpe",mean_return,Mean return (pp),-0.011864731952426218,0.07261207006025602,0.0721945975029382
+"Panel B: Difference from B&H, Max Sharpe",mean_return,\quad $t$-statistic,-0.5004051643834906,2.663918776925283,2.642994450779622
+"Panel B: Difference from B&H, Max Sharpe",mean_return,\quad Bootstrap $p$-value,0.7038,0.0026,0.0028
+"Panel B: Difference from B&H, Max Sharpe",sharpe,Sharpe ratio,-0.09204825476617172,0.2625349027802816,0.26212683864352376
+"Panel B: Difference from B&H, Max Sharpe",sharpe,\quad $t$-statistic,-0.4788183976767877,1.234549253157419,1.221474359841938
+"Panel B: Difference from B&H, Max Sharpe",sharpe,\quad Bootstrap $p$-value,0.6534,0.1142,0.1184
+"Panel B: Difference from B&H, Max Sharpe",crra_ce,CRRA certainty equivalent (pp),-0.010057350865316561,0.062573234060459,0.06250492270922159
+"Panel B: Difference from B&H, Max Sharpe",crra_ce,\quad $t$-statistic,-0.33022028902367306,1.7118951331947254,1.6967865821367196
+"Panel B: Difference from B&H, Max Sharpe",crra_ce,\quad Bootstrap $p$-value,0.6172,0.0392,0.042

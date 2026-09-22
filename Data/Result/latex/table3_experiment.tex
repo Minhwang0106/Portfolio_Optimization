@@ -9,7 +9,14 @@
 \toprule
  & {Mean return} & {Sharpe ratio} & {CRRA CE} \\
 \midrule
-\multicolumn{4}{l}{\textit{Distribution of $t$-statistics across realisations}} \\
+\multicolumn{4}{l}{\textit{Panel A: Share of realisations with the larger value}} \\
+Asset 1 higher (\%) & 0.00 & 0.53 & 0.56 \\
+Asset 2 higher (\%) & 100.00 & 99.47 & 99.44 \\
+\addlinespace
+\midrule
+ & {Mean return} & {Sharpe ratio} & {CRRA CE} \\
+\midrule
+\multicolumn{4}{l}{\textit{Panel B: Distribution of $t$-statistics across realisations}} \\
 Mean & -2.52 & 11.60 & 0.60 \\
 Standard deviation & 0.32 & 1.77 & 0.38 \\
 5th percentile & -2.99 & 8.92 & 0.01 \\
@@ -23,9 +30,9 @@ Reject at the 5\% level (\%) & 94.22 & 99.90 & 0.24 \\
 \bottomrule
 \end{tabular}
 \begin{tablenotes}[flushleft]\footnotesize
-\item Two synthetic assets over 132 months, A minus B: A is Gaussian with a 10\% annual mean and 1\% volatility, a steady compounder; B is Gaussian with a 40\% mean and 40\% volatility for 120 months, then set so that terminal wealth is exactly $40\times$ in every realisation. A positive value favours the steadier asset.
-\item The distribution of $t$-statistics over 10,000 realisations of the pair; "reject" is against the null of no difference at the 5\% level.
-\item CRRA utility uses $\gamma=5$. Each realisation's $t$-statistic is diff / HAC standard error (Andrews and Monahan, 1992); no bootstrap runs per realisation.
+\item Panel A: two synthetic assets calibrated to Table 1's `Max Sharpe, B\&H $N$' and `CRRA, B\&H $N$' columns. Asset 1's terminal compound return is a fixed 15\% a year, every realisation; its first ten years draw at 15\% mean, 16.6\% volatility, and the last year is set so terminal wealth hits that target exactly. Asset 2's target is itself drawn once per realisation, from a 25\% mean, 2\% volatility Gaussian, so it keeps a little terminal-wealth risk; its first ten years draw at 25\% mean, 19\% volatility, built the same way. Both carry realistic path risk, unlike Panel B's Asset A. No test is run: the share is a count over 10,000 realisations of which asset has the larger value.
+\item Panel B: two synthetic assets over 132 months, A minus B: A is Gaussian with a 10\% annual mean and 1\% volatility, a steady compounder; B is Gaussian with a 40\% mean and 40\% volatility for 120 months, then set so that terminal wealth is exactly $40\times$ in every realisation. A positive value favours the steadier asset. The distribution of $t$-statistics is over 10,000 realisations of the pair; "reject" is against the null of no difference at the 5\% level.
+\item CRRA utility uses $\gamma=5$ throughout. Panel B's $t$-statistic is diff / HAC standard error (Andrews and Monahan, 1992); no bootstrap runs per realisation.
 \end{tablenotes}
 \end{threeparttable}
 \end{table}
