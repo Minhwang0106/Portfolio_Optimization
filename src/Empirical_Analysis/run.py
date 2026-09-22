@@ -111,9 +111,9 @@ from constant import (
     testing_period, RAW_BACKTEST_DIR, backtest_cost_bps, ppp_estimation_month,
     risk_aversion, IMPLIED_RETURN_DIR, icc_weight_cap
 )
-from .data import universe, monthly_return, risk_free
-from .engine import backtest, quarter_ends, BacktestResult, WeightFn
-from .metrics import summarise, cumulative_wealth
+from .backtest.data import universe, monthly_return, risk_free
+from .backtest.engine import backtest, quarter_ends, BacktestResult, WeightFn
+from .backtest.metrics import summarise, cumulative_wealth
 
 STRATEGIES: tuple[str, ...] = ('equal_weight', 'epo', 'ppp', 'icc_mvo_ex_post',
                                'icc_mvo_ex_post_qu',
@@ -495,7 +495,7 @@ def run_all (dates=testing_period, only: tuple[str, ...]|None = None,
             proposed model's copula draw per date. Defaults to 0.
         sr_benchmark (str | None): Strategy whose Sharpe ratio every other one
             is tested against, by Ledoit-Wolf (2008); see
-            `Empirical_Analysis.sharpe_inference`. Defaults to `'equal_weight'`.
+            `Empirical_Analysis.inference.sharpe_inference`. Defaults to `'equal_weight'`.
             None reports the Sharpe ratios without testing them.
         n_boot (int): Bootstrap resamples behind `sr_diff_pval_boot`. Defaults
             to 4999. 0 leaves only the HAC p-value, which is the liberal one.

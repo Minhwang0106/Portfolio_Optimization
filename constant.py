@@ -73,7 +73,7 @@ testing_period:pd.DatetimeIndex = pd.date_range("2015-01-01",
 # membership *and* the full data screen -- and every later date is that same pool
 # re-screened for data availability. Re-screening is the part that matters: it is
 # what makes a delisted name leave the universe at the next rebalance instead of
-# being carried at a flat return forever by `Empirical_Analysis.engine`.
+# being carried at a flat return forever by `Empirical_Analysis.backtest.engine`.
 #
 # None is the default because freezing is the more restrictive claim, not the
 # safer one. A frozen pool excludes every index entrant after the freeze date,

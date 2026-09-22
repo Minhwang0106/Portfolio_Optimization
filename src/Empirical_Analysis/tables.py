@@ -62,11 +62,11 @@ import pandas as pd
 
 from constant import (RAW_BACKTEST_DIR, PROCESSED_BACKTEST_DIR, LATEX_DIR,
                       risk_aversion, backtest_cost_bps)
-from .sharpe_inference import sharpe_difference_test
-from .ce_inference import ce_difference_test
-from .mean_inference import mean_difference_test
-from . import experiment_thought as thought
-from . import experiment_thought_panel_a as thought_a
+from .inference.sharpe_inference import sharpe_difference_test
+from .inference.ce_inference import ce_difference_test
+from .inference.mean_inference import mean_difference_test
+from .experiment import experiment_thought as thought
+from .experiment import experiment_thought_panel_a as thought_a
 
 # Table 1, ex post: B&H's two objectives, then the proposed model's three, all
 # at B&H's effective N -- no unconstrained column. Every proposed column's

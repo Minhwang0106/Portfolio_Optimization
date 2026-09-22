@@ -141,5 +141,5 @@ treat it as a methodology decision, not a default to tune for wall-clock time.
 
 See `Instruction/data-collection-rim.md` for the accounting-tag mapping behind
 the characteristic panel, and `Instruction/CRRA_CE_Inference_Obsidian.md` for
-the certainty-equivalent metric `Empirical_Analysis.metrics` reports alongside
+the certainty-equivalent metric `Empirical_Analysis.backtest.metrics` reports alongside
 the Sharpe ratio.

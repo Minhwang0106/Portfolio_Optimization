@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.Empirical_Analysis.ce_inference import (
+from src.Empirical_Analysis.inference.ce_inference import (
     ce_difference_test, _exponent, _gradient, _utility
 )
-from src.Empirical_Analysis.metrics import crra_certainty_equivalent
+from src.Empirical_Analysis.backtest.metrics import crra_certainty_equivalent
 
 GAMMA: float = 5.0
 

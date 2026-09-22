@@ -45,7 +45,7 @@ from constant import (
 )
 from ..panel import read_csv_file, book_equity
 from ..Proposed_Model.data_generator import _adjusted_shares, accounting_cutoff
-from ..Empirical_Analysis.data import monthly_return, risk_free
+from ..Empirical_Analysis.backtest.data import monthly_return, risk_free
 from .icc_adjusted import (
     gls_path, icc_gls, expected_excess_return, MONTHS_PER_YEAR,
 )
@@ -146,7 +146,7 @@ class Icc_Mvo:
         Args:
             date (str | pd.Timestamp): Formation date, a month end.
             tickers (list[str]): Candidate universe, typically
-                `Empirical_Analysis.data.universe()[date]`.
+                `Empirical_Analysis.backtest.data.universe()[date]`.
 
         Raises:
             ValueError: If the ROE panel does not yet hold the industry median's

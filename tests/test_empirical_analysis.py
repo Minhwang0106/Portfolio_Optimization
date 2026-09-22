@@ -17,8 +17,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.Empirical_Analysis.engine import backtest, quarter_ends
-from src.Empirical_Analysis.metrics import (
+from src.Empirical_Analysis.backtest.engine import backtest, quarter_ends
+from src.Empirical_Analysis.backtest.metrics import (
     SUMMARY_ROWS,
     crra_certainty_equivalent,
     max_drawdown,

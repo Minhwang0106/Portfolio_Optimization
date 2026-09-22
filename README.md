@@ -105,7 +105,7 @@ python -m src.Empirical_Analysis.tables
 
 Reads `raw_backtest/` and writes the three reported tables twice — as CSV to
 `processed_backtest/` and as `booktabs` LaTeX to `latex/`, ready to `\input{}` into Overleaf.
-Table 3 is the thought experiment of `src/Empirical_Analysis/experiment_thought.py`; pass
+Table 3 is the thought experiment of `src/Empirical_Analysis/experiment/experiment_thought.py`; pass
 `--skip-experiment` to build only Tables 1 and 2, or `--n-sim 1000` for a faster Monte Carlo.
 
 **4. Tests.**

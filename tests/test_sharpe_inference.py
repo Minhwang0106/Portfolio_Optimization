@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.Empirical_Analysis.engine import BacktestResult
-from src.Empirical_Analysis.metrics import summarise
-from src.Empirical_Analysis.sharpe_inference import (
+from src.Empirical_Analysis.backtest.engine import BacktestResult
+from src.Empirical_Analysis.backtest.metrics import summarise
+from src.Empirical_Analysis.inference.sharpe_inference import (
     _block_indices, _centred, _delta, _gradient, _moments, _psi_boot, _psi_hac,
     _qs_kernel, _standard_error, calibrate_block_size, sharpe_difference_test)
 
@@ -215,7 +215,7 @@ def test_calibration_ties_are_broken_mid_grid_not_at_an_extreme(monkeypatch):
     is what decides. Feeding a deliberately flat curve pins that behaviour
     without paying for a simulation.
     """
-    import src.Empirical_Analysis.sharpe_inference as si
+    import src.Empirical_Analysis.inference.sharpe_inference as si
     flat = {1: 0.951, 2: 0.949, 4: 0.948, 6: 0.952, 8: 0.947, 10: 0.953}
     monkeypatch.setattr(si, '_var1_pseudo',
                         lambda *a, **k: np.empty((0, MONTHS, 2)))

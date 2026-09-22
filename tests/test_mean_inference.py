@@ -13,10 +13,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.Empirical_Analysis.mean_inference import (
+from src.Empirical_Analysis.inference.mean_inference import (
     mean_difference_test, _centred, _standard_error, _GRADIENT
 )
-from src.Empirical_Analysis.sharpe_inference import _psi_hac
+from src.Empirical_Analysis.inference.sharpe_inference import _psi_hac
 
 
 def _series (values: np.ndarray)-> pd.Series:

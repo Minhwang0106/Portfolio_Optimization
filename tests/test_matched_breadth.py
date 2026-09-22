@@ -12,7 +12,7 @@ from src.Proposed_Model.utils.port_optimize import (
 )
 from src.ICC_MVO.utils import max_sharpe_weight
 from src.Empirical_Analysis.run import effective_n_target
-from src.Empirical_Analysis.sharpe_inference import sharpe_difference_test
+from src.Empirical_Analysis.inference.sharpe_inference import sharpe_difference_test
 from src.Empirical_Analysis.tables import _difference_block, render_latex
 
 

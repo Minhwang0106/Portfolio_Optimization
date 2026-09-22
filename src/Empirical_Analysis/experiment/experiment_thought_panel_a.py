@@ -44,15 +44,15 @@ illustrates. `win_shares` only counts, out of `n_sim` realisations, how often
 each asset has the larger value of each statistic.
 
 Run:
-    python -m src.Empirical_Analysis.experiment_thought_panel_a
-    python -m src.Empirical_Analysis.experiment_thought_panel_a --n-sim 5000
+    python -m src.Empirical_Analysis.experiment.experiment_thought_panel_a
+    python -m src.Empirical_Analysis.experiment.experiment_thought_panel_a --n-sim 5000
 """
 import argparse
 import math
 import numpy as np
 import pandas as pd
 
-from .metrics import MONTHS_PER_YEAR
+from ..backtest.metrics import MONTHS_PER_YEAR
 from .experiment_thought import describe, GAMMA
 
 N_MONTH: int = 132              # 11 years, matching Panel B and the backtest.

@@ -11,7 +11,7 @@ Data/raw file/
 .vscode/
 Instruction/
 .venv/
-backtest/
+/backtest/
 accounting.csv.bak
 monthly_price.csv.bak
 current problem

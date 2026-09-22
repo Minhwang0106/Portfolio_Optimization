@@ -55,20 +55,20 @@ not optional:
   the point estimates, not the p-values.
 
 Run:
-    python -m src.Empirical_Analysis.experiment_thought
-    python -m src.Empirical_Analysis.experiment_thought --n-sim 5000
-    python -m src.Empirical_Analysis.experiment_thought --distribution lognormal
+    python -m src.Empirical_Analysis.experiment.experiment_thought
+    python -m src.Empirical_Analysis.experiment.experiment_thought --n-sim 5000
+    python -m src.Empirical_Analysis.experiment.experiment_thought --distribution lognormal
 """
 import argparse
 import math
 import numpy as np
 import pandas as pd
 
-from .metrics import (MONTHS_PER_YEAR, max_drawdown, crra_certainty_equivalent,
+from ..backtest.metrics import (MONTHS_PER_YEAR, max_drawdown, crra_certainty_equivalent,
                       _annualise_geometric)
-from .sharpe_inference import sharpe_difference_test
-from .ce_inference import ce_difference_test
-from .mean_inference import mean_difference_test
+from ..inference.sharpe_inference import sharpe_difference_test
+from ..inference.ce_inference import ce_difference_test
+from ..inference.mean_inference import mean_difference_test
 
 N_MONTH: int = 132              # 11 years.
 N_RANDOM: int = 120             # The first 10; the last 12 are deterministic.

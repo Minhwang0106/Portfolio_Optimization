@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 from constant import risk_aversion
 from .engine import BacktestResult
-from .sharpe_inference import sharpe_difference_test
+from ..inference.sharpe_inference import sharpe_difference_test
 
 MONTHS_PER_YEAR: int = 12
 

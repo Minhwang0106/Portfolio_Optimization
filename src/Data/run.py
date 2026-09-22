@@ -19,7 +19,7 @@ def _write_applicable_ticker (ticker_overtime: dict[str, set[str]],
     """Write the per-date applicable-ticker sets out, one comma-joined row each.
 
     Shared by `run` and `run_applicable_ticker` so the two cannot write the file
-    in two different shapes; `Empirical_Analysis.data.universe` parses exactly
+    in two different shapes; `Empirical_Analysis.backtest.data.universe` parses exactly
     this one.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,8 +233,8 @@ def run_applicable_ticker (accounting_path=accounting_path,
     Note:
         Rewriting the file underneath a live process leaves two caches stale.
         This clears `panel`'s; a process that has already called
-        `Empirical_Analysis.data.universe` must also call
-        `Empirical_Analysis.data.clear_backtest_cache`, which is not imported
+        `Empirical_Analysis.backtest.data.universe` must also call
+        `Empirical_Analysis.backtest.data.clear_backtest_cache`, which is not imported
         here because `Data` does not depend on `Empirical_Analysis`.
 
     Example:

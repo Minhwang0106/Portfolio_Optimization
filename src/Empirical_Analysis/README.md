@@ -195,7 +195,7 @@ A ticker is a candidate at `t` iff **all five** hold:
 Two consequences worth stating. The accounting window ends one quarter *before*
 `t` while the price window ends *at* `t` — that gap is the publication lag built
 into the universe itself, before any model applies its own. And a date whose S&P
-snapshot is missing gets no entry at all; `Empirical_Analysis.data.universe`
+snapshot is missing gets no entry at all; `Empirical_Analysis.backtest.data.universe`
 likewise omits dates the table leaves blank, so `universe.get(t)` returning
 `None` means "no universe here", not "an empty one".
 
@@ -331,7 +331,7 @@ One implementation choice is worth knowing before quoting a number: the
 bootstrap covariance is scaled by `1/l` rather than the `1/T` printed in the
 paper's Section 3.2.2. The two agree only at block size 1, which is the case its
 footnote 9 checks; `1/T` is short by a factor of `b` everywhere else. See the
-top of `sharpe_inference.py`.
+top of `inference/sharpe_inference.py`.
 
 ### Why the block size is fixed at 5 rather than calibrated
 
@@ -362,17 +362,29 @@ size.
 
 ## Modules
 
+`backtest/`
 - `data.py` — the universe, the realised monthly return panel, the risk-free rate.
-- `sharpe_inference.py` — the Ledoit-Wolf test above, and the block size
-  calibration.
-- `strategy.py` — adapters putting all three models on one `(date, tickers) ->
-  pd.Series` signature, plus `normalise`.
 - `engine.py` — the backtest loop and `BacktestResult`.
 - `metrics.py` — performance statistics, including the CRRA certainty equivalent
   at `constant.risk_aversion`, which is the objective PPP and the proposed model
   are actually fitted on.
+
+`inference/`
+- `sharpe_inference.py` — the Ledoit-Wolf test above, and the block size
+  calibration.
+- `ce_inference.py` — the same test for the CRRA certainty equivalent.
+- `mean_inference.py` — the same test for the mean return.
+
+`experiment/`
+- `experiment_thought.py` — the thought experiment behind Table 3, Panel B.
+- `experiment_thought_panel_a.py` — Table 3, Panel A.
+
+At the top level, the modules that tie these together:
+- `strategy.py` — adapters putting all three models on one `(date, tickers) ->
+  pd.Series` signature, plus `normalise`.
 - `run.py` — configures each model inside its own worker process and fans the
   strategies out over a pool.
+- `tables.py` — builds the paper's tables from `raw_backtest/`.
 
 ## What the table reports
 

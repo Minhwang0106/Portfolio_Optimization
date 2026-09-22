@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.Empirical_Analysis.engine import backtest
-from src.Empirical_Analysis.metrics import summarise
+from src.Empirical_Analysis.backtest.engine import backtest
+from src.Empirical_Analysis.backtest.metrics import summarise
 from src.Empirical_Analysis.run import rebuild, save, universe_from_books
 from src.Empirical_Analysis.strategy import equal_weight
 

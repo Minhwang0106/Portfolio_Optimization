@@ -18,7 +18,7 @@ from pathlib import Path
 from constant import (
     applicable_ticker_path, monthly_price_path, monthly_FF5_path
 )
-from ..panel import read_csv_file
+from ...panel import read_csv_file
 
 
 @lru_cache(maxsize=None)
