@@ -20,10 +20,10 @@ work -- nothing here is reimplemented, so this can't drift from
 1. **Data** (`src.Data.run.main`) -- fetches prices from Yahoo Finance,
    accounting data from SEC EDGAR, and rebuilds the point-in-time universe.
    Network-bound, hours on a full run.
-2. **Backtest** (`src.Empirical_Analysis.run.run_all`) -- backtests all five
-   strategies and writes `Data/Result/raw_backtest/`. The proposed model's two
-   variants are the long pole; see `src/Proposed_Model/README.md`'s
-   Performance section -- a full run is on the order of ten hours.
+2. **Backtest** (`src.Empirical_Analysis.run.run_all`) -- backtests every
+   strategy and writes `Data/Result/raw_backtest/`. The proposed model's two
+   variants are the long pole (see `src/Proposed_Model/README.md`) -- a full
+   run is on the order of ten hours.
 3. **Tables** (`src.Empirical_Analysis.tables.build_all`) -- reads
    `raw_backtest/` and writes the three reported tables as CSV and LaTeX.
 
@@ -32,8 +32,7 @@ without paying for what already finished: `--skip-data` trusts the panels on
 disk, `--skip-backtest` trusts `Data/Result/raw_backtest/`. Finer control than
 what's exposed here -- `--resume`-ing an interrupted fetch, `--rebuild`-ing a
 backtest from saved weights, a custom output directory -- goes through the
-underlying module directly; see `README.md` and each subpackage's own
-`README.md` for the full flag reference.
+underlying module directly; each one's `--help` lists its flags.
 """
 import argparse
 import time

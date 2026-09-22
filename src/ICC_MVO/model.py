@@ -31,9 +31,24 @@ formation date on, the later years run past it and are extrapolated
 (`inputs.complete_eps`); how many years each name had realised is kept in
 `Icc_Mvo.inputs['n_oracle_years']`.
 
-Every other substitute for B&H's data -- dividends from adjusted closes, the
-industry ROE over every SEC filer's firm-years grouped by SIC code, the
-Fama-French risk-free rate -- is listed in `src/ICC_MVO/README.md`.
+Every other substitute for B&H's data:
+
+* Dividends are recovered from Yahoo's close/adjusted-close factor, summed
+  over the same four quarters as E0, and the payout ratio follows GLS:
+  `k = DPS/EPS`, or `DPS/(0.06*TA)` when EPS <= 0, clipped to [0, 1].
+* The industry ROE is the median over profitable firm-years of every SEC XBRL
+  filer in the FF48 industry (`Data.industry_pool`), pooled over the last 5-10
+  calendar years and grouped by SEC's current SIC code. An industry with fewer
+  than `constant.industry_min_obs` firm-years takes the all-firm median.
+* Book value is at the latest quarter, not the fiscal year-end.
+* The risk-free rate is the Fama-French one-month bill rate, compounded to a
+  year.
+* Rebalancing is quarterly, on the proposed model's calendar; `--icc-annual`
+  rebalances each June, as B&H do.
+* The universe is this repo's point-in-time S&P 500 screen, and a name also
+  needs a positive price and book equity, an ICC root in (0.01%, 100%), 11
+  months of momentum and all 60 months of returns. `Icc_Mvo.dropped` records
+  which screen removed each name.
 """
 from pathlib import Path
 import numpy as np

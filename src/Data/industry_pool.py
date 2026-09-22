@@ -28,7 +28,7 @@ an interrupted run resumes) and is mapped to FF48 with French's `Siccodes48`.
 SIC is looked up only for filers with at least one profitable year, since loss
 years never enter the median.
 
-Limits, stated where the median is used (`ICC_MVO/README.md`):
+Limits:
 * A frame holds the value *last filed*, so a restatement replaces the original.
 * A non-December filer's year is aligned to the nearest calendar year, and its
   opening equity is its balance at the calendar year-end (from a 10-Q) rather

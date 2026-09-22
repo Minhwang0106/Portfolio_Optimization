@@ -24,9 +24,8 @@ membership, monthly adjusted prices, and quarterly XBRL accounting data. `src/Em
 is the backtest harness — it fixes the universe, rebalance calendar, transaction costs, and
 performance metrics so every strategy is compared on equal footing, and tests whether
 each strategy's Sharpe ratio differs from equal-weight's using the Ledoit-Wolf (2008)
-studentized bootstrap. See [`src/Empirical_Analysis/README.md`](src/Empirical_Analysis/README.md)
-for the full methodology: the exclusion rule, how each model's long-only constraint is imposed,
-and what the output tables mean.
+studentized bootstrap. Each package's own `README.md` says what it does and how to run it;
+the methodology is in the paper and in the modules' docstrings.
 
 ## Repository structure
 
@@ -147,8 +146,8 @@ missing file.
 Writes `summary.csv`, `monthly_returns.csv`, `cumulative_wealth.csv`, and per-strategy
 diagnostics to `Data/Result/raw_backtest/`. Add `--only equal_weight epo ppp` to skip the slower
 proposed-model runs while iterating, or `--rebuild` to recompute metrics from previously saved
-weights without re-running the backtest. Full flag reference and methodology notes are in
-[`src/Empirical_Analysis/README.md`](src/Empirical_Analysis/README.md).
+weights without re-running the backtest. `python -m src.Empirical_Analysis.run --help` lists
+every flag; see also [`src/Empirical_Analysis/README.md`](src/Empirical_Analysis/README.md).
 
 **3. Build the paper's tables.**
 

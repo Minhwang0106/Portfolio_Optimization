@@ -29,7 +29,7 @@ checks French's ranges for internal overlaps, so a future revision of the file
 that contradicts itself is caught rather than silently resolved by whichever
 range happens to come first.
 
-Two limits, stated where the median is used (`ICC_MVO/README.md`). SEC's `sic`
+Two limits. SEC's `sic`
 is the registrant's *current* code, where GLS use the one in force at the time;
 an S&P 500 firm rarely changes industry, but one that did is grouped by where it
 ended up. And a ticker SEC's list no longer carries gets no CIK; `ICC_MVO` gives
