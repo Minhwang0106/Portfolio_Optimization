@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy.optimize import minimize
 from ...PPP.utils import crra_utility
-from ...ICC_MVO.utils import max_sharpe_weight
+from ...ICC_MVO.utils import max_sharpe_weight, quadratic_utility_weight
 from constant import risk_aversion
 
 
@@ -211,6 +211,57 @@ def moment_port_weight (return_arr: np.ndarray|pd.DataFrame, rf: float = 0.0,
     sigma: np.ndarray = np.atleast_2d(np.cov(matrix, rowvar=False))
     weight: np.ndarray = max_sharpe_weight(mu, sigma, cap=1.0, min_weight=0.0,
                                            n_eff=n_eff)
+    out: pd.Series = pd.Series(0.0, index=labels)
+    out.loc[labels[keep]] = weight
+    return out
+
+def moment_quadratic_utility_weight (return_arr: np.ndarray|pd.DataFrame,
+                                     risk_aversion: float = risk_aversion,
+                                     n_eff: float|None = None)-> pd.Series:
+    """Maximum mean-variance utility on the simulation's first two moments.
+
+    `moment_port_weight`'s counterpart for quadratic (mean-variance) utility:
+    same sample mean and covariance of the simulated implied returns, put
+    through `ICC_MVO.utils.quadratic_utility_weight` instead of
+    `max_sharpe_weight`. Beside `port_weight` (CRRA) on the same draws, the
+    gap is what the rest of the distribution is worth to an investor with the
+    same risk aversion; beside B&H's own quadratic-utility row
+    (`Icc_Mvo.weight(objective='quadratic_utility')`), it is what
+    fundamentals-derived moments are worth against a point estimate paired
+    with a price-history covariance -- the same reading `moment_port_weight`
+    gives against B&H's max-Sharpe row, now with the objective held fixed on
+    both sides instead of bundled in with the inputs.
+
+    No `rf` argument, unlike `moment_port_weight`. Mean-variance utility here
+    is maximised subject to `sum(w) = 1`; on that constraint set, subtracting
+    a constant from every element of `mu` shifts `U(w)` by that same constant
+    for every feasible `w` and moves no argmax (`mu'w - c*sum(w) = mu'w - c`
+    when `sum(w) = 1`, for any `c`). The Sharpe ratio is not evaluated on a
+    budget-constrained sum, which is why it alone needs `rf`.
+
+    Args:
+        return_arr (np.ndarray | pd.DataFrame): As `port_weight` and
+            `moment_port_weight` take it -- indexed by ticker with one column
+            per simulation.
+        risk_aversion (float): The mean-variance risk-aversion coefficient.
+            Defaults to `constant.risk_aversion`.
+        n_eff (float | None): As `moment_port_weight`. Defaults to None.
+
+    Returns:
+        pd.Series: As `moment_port_weight` -- one weight per ticker, indexed
+            when the input carried labels, summing to 1. A ticker dropped for
+            non-finite simulations gets 0.
+
+    Raises:
+        ValueError: As `_usable_simulations`, and whatever
+            `quadratic_utility_weight` raises.
+    """
+    labels, keep, matrix = _usable_simulations(return_arr)
+    mu: np.ndarray = matrix.mean(axis=0)
+    sigma: np.ndarray = np.atleast_2d(np.cov(matrix, rowvar=False))
+    weight: np.ndarray = quadratic_utility_weight(
+        mu, sigma, risk_aversion=risk_aversion, cap=1.0, min_weight=0.0,
+        n_eff=n_eff)
     out: pd.Series = pd.Series(0.0, index=labels)
     out.loc[labels[keep]] = weight
     return out

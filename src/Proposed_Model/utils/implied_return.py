@@ -155,7 +155,7 @@ def implied_return (future_bn:np.ndarray, be0:np.ndarray,
             payoff is negative, which no fractional power can annualise.
     """
     # Renamed off `terminal_val`, which is the module-level function above.
-    tv_excess: np.ndarray = (tv-beT)*0
+    tv_excess: np.ndarray = (tv-beT)*0# this factor is dropped in our final equation, therefore it is multiplied by zero
     # Negative components are moved to the denominator rather than netted off
     # the numerator: a path that destroys value is an extra outlay, not a
     # smaller payoff. `future_bn` carries `be0`, so it is not added again.

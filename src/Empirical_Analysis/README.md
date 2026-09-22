@@ -48,15 +48,16 @@ numbers. Pass `verify=False` when a change to the returns is the point.
 | `epo` | `src.EPO` | monthly | long-only, sums to 1 |
 | `ppp` | `src.PPP` | monthly | long-only, sums to 1 |
 | `icc_mvo_ex_post` | `src.ICC_MVO` | quarterly (`--icc-annual`: each June) | long-only, ≤ 5% per name, sums to 1 |
+| `icc_mvo_ex_post_qu` | `src.ICC_MVO`, quadratic utility instead of max Sharpe | quarterly | long-only, ≤ 5% per name, sums to 1 |
 | `proposed_historical` | `src.Proposed_Model` | quarterly | long-only, sums to 1 |
 | `proposed_ex_post` | `src.Proposed_Model`, `ex_post=True` | quarterly | long-only, sums to 1 |
 | `proposed_historical_epo_n` | `proposed_historical`, re-solved from its dumps | quarterly | long-only, sums to 1, effective N ≥ EPO's at each date |
 | `proposed_historical_ppp_n` | `proposed_historical`, re-solved from its dumps | quarterly | long-only, sums to 1, effective N ≥ PPP's at each date |
 | `proposed_ex_post_icc_n` | `proposed_ex_post`, re-solved from its dumps | quarterly | long-only, sums to 1, effective N ≥ `icc_mvo_ex_post`'s at each date |
 | `proposed_ex_post_msr_icc_n` | max Sharpe on `proposed_ex_post`'s simulated mean and covariance | quarterly | long-only, sums to 1, effective N ≥ `icc_mvo_ex_post`'s at each date |
-| `proposed_ex_post_msr` | max Sharpe on `proposed_ex_post`'s simulated mean and covariance | quarterly | long-only, sums to 1 |
+| `proposed_ex_post_qu_icc_n` | quadratic utility on `proposed_ex_post`'s simulated mean and covariance | quarterly | long-only, sums to 1, effective N ≥ `icc_mvo_ex_post`'s at each date |
 
-All eleven are long-only and fully invested by default, which is what makes their
+All twelve are long-only and fully invested by default, which is what makes their
 return column comparable at all. `--long-short` restores the forms `EPO`, `PPP`
 and the proposed model state in their own papers; unconstrained PPP runs to a
 median 9.9x gross exposure and unconstrained EPO is close to market neutral, so
@@ -94,23 +95,27 @@ from. It is the point-estimate benchmark of the ex post table; every
 substitution for B&H's data is listed in `src/ICC_MVO/README.md`. It needs
 `industry.csv` and `industry_roe_pool.csv` (`python -m src.Data.industry`,
 `python -m src.Data.industry_pool`) for the industry ROE, and `--long-short`
-leaves it long-only, as B&H state it.
+leaves it long-only, as B&H state it. `icc_mvo_ex_post_qu` is the same
+construction under quadratic (mean-variance) utility instead of maximum
+Sharpe -- this repo's own comparison point, not part of B&H's specification
+-- and carries the same caveats.
 
-**The five re-solved rows never simulate.** `proposed_ex_post_msr` is B&H's
-maximum-Sharpe rule on the simulation's mean and covariance with no breadth
-floor; the other four are matched rows. Each reads the
-proposed model's saved simulated implied returns (`--dump-implied-return`, read
-back from `--replay-dir`) and solves again with a breadth floor: every name
-capped at `1/N`, where `N` is the comparator's effective N in the book it held
-at that date -- read date by date, never the full-sample average, which is
-known only at the end of the sample. The cap is B&H's own device, sized to
-`N` instead of a fixed percentage; a book with no weight above `1/N` has an
-effective N of at least `N`. `proposed_ex_post_msr_icc_n` swaps the
-objective as well: B&H's maximum-Sharpe rule on the simulation's mean and
-covariance, so it differs from B&H in its inputs and from
-`proposed_ex_post_icc_n` in its objective. Each needs its comparator's weights,
-from the same run or from `weights_<comparator>.csv` in `--out`, which is how
-they are added to a finished run:
+**The five re-solved rows never simulate, and all five carry a breadth
+floor.** Each reads the proposed model's saved simulated implied returns
+(`--dump-implied-return`, read back from `--replay-dir`) and solves again
+with a breadth floor: every name capped at `1/N`, where `N` is the
+comparator's effective N in the book it held at that date -- read date by
+date, never the full-sample average, which is known only at the end of the
+sample. The cap is B&H's own device, sized to `N` instead of a fixed
+percentage; a book with no weight above `1/N` has an effective N of at
+least `N`. Two of the five swap the objective as well, holding
+`icc_mvo_ex_post`'s breadth fixed so only the objective differs:
+`proposed_ex_post_msr_icc_n` is B&H's maximum-Sharpe rule and
+`proposed_ex_post_qu_icc_n` is quadratic (mean-variance) utility, both on
+the simulation's mean and covariance; `proposed_ex_post_icc_n` is CRRA on
+the whole simulation. Each needs its comparator's weights, from the same
+run or from `weights_<comparator>.csv` in `--out`, which is how they are
+added to a finished run:
 
 ```
 python -m src.Empirical_Analysis.run --only proposed_historical_epo_n proposed_historical_ppp_n

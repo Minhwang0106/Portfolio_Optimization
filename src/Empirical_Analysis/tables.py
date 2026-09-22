@@ -15,19 +15,25 @@ published table is the kind of error that survives review.
 
 The three tables:
 
-* **Table 1** -- ex post. Bielstein and Hanauer's portfolio against the proposed
-  model four ways, a 2x2: the objective, maximum Sharpe on its simulated
-  moments or CRRA over the whole simulation, crossed with the breadth, held to
-  B&H's or left free. B&H against max Sharpe at its breadth isolates the
-  inputs; each pair of columns isolates one of the other two. Panel A the
-  levels, Panel B each proposed row minus B&H.
+* **Table 1** -- ex post. Bielstein and Hanauer's portfolio under maximum
+  Sharpe or quadratic (mean-variance) utility on the same inputs, against the
+  proposed model under three objectives on its simulated moments or whole
+  distribution -- maximum Sharpe, quadratic utility, or CRRA -- every proposed
+  column held to B&H's effective N. No unconstrained column: breadth is fixed
+  throughout, so every comparison isolates the objective alone. Panel A the
+  levels; Panels B and C each proposed row minus B&H, twice over -- against
+  B&H's max-Sharpe column, then against its quadratic-utility column.
 * **Table 2** -- historical, i.e. implementable. Equal weight, EPO, PPP, and the
   proposed model at EPO's breadth, at PPP's, and unconstrained. Panel A the
   levels, Panel B every row minus equal weight, Panel C each matched row minus
   the comparator whose breadth it holds.
-* **Table 3** -- the thought experiment of `experiment_thought`: the Monte
-  Carlo distribution of the disagreement between the three tests, one panel,
-  the one-realisation illustration having been dropped as clutter.
+* **Table 3** -- the thought experiment, two panels. Panel A
+  (`experiment_thought_panel_a`): two synthetic assets calibrated to Table 1's
+  `Max Sharpe, B&H N` and `CRRA, B&H N` columns, each given realistic path
+  volatility, and how often each has the larger mean return, Sharpe ratio and
+  CRRA CE -- a share, not a test. Panel B (`experiment_thought`): the original
+  pair and the Monte Carlo distribution of the disagreement between the three
+  tests, the one-realisation illustration having been dropped as clutter.
 
 Every difference test in Tables 1 and 2 is one-sided, `H1`: the row beats its
 benchmark -- the question the paper puts to each comparison, fixed before the
@@ -60,21 +66,29 @@ from .sharpe_inference import sharpe_difference_test
 from .ce_inference import ce_difference_test
 from .mean_inference import mean_difference_test
 from . import experiment_thought as thought
+from . import experiment_thought_panel_a as thought_a
 
-# Table 1, ex post: B&H first, then the proposed model as a 2x2 -- the two
-# objectives at B&H's breadth, then the two unconstrained. Every column after
-# B&H is the proposed model, which the notes say rather than each header.
-EX_POST_BENCHMARK: str = 'icc_mvo_ex_post'
-EX_POST_ORDER: tuple[str, ...] = ('icc_mvo_ex_post',
+# Table 1, ex post: B&H's two objectives, then the proposed model's three, all
+# at B&H's effective N -- no unconstrained column. Every proposed column's
+# breadth is the same, which the notes say once rather than each header.
+EX_POST_ORDER: tuple[str, ...] = ('icc_mvo_ex_post', 'icc_mvo_ex_post_qu',
                                   'proposed_ex_post_msr_icc_n',
-                                  'proposed_ex_post_icc_n',
-                                  'proposed_ex_post_msr', 'proposed_ex_post')
+                                  'proposed_ex_post_qu_icc_n',
+                                  'proposed_ex_post_icc_n')
 EX_POST_LABEL: dict[str, str] = {
-    'icc_mvo_ex_post': 'B&H',
-    'proposed_ex_post_msr_icc_n': 'Max Sharpe, B&H $N$',
-    'proposed_ex_post_icc_n': 'CRRA, B&H $N$',
-    'proposed_ex_post_msr': 'Max Sharpe, unconstrained',
-    'proposed_ex_post': 'CRRA, unconstrained'}
+    'icc_mvo_ex_post': 'B&H, Max Sharpe',
+    'icc_mvo_ex_post_qu': 'B&H, Quadratic Utility',
+    'proposed_ex_post_msr_icc_n': 'Max Sharpe',
+    'proposed_ex_post_qu_icc_n': 'Quadratic Utility',
+    'proposed_ex_post_icc_n': 'CRRA'}
+# Each proposed column is tested against both of B&H's columns, one panel
+# per benchmark: (benchmark strategy, this table's key for the block, panel
+# title). Order matters -- it is the order the panels render in.
+EX_POST_BENCHMARKS: tuple[tuple[str, str, str], ...] = (
+    ('icc_mvo_ex_post', 'tests_vs_max_sharpe',
+     'Panel B: Difference from B&H, Max Sharpe'),
+    ('icc_mvo_ex_post_qu', 'tests_vs_qu',
+     'Panel C: Difference from B&H, Quadratic Utility'))
 
 # Table 2, historical: the benchmark, the two models from the literature, then
 # the proposed model at each one's breadth and unconstrained.
@@ -125,18 +139,24 @@ T_ROW: str = '\\quad $t$-statistic'
 P_ROW: str = '\\quad Bootstrap $p$-value'
 
 # Table 3's three statistics, in the same order as `DIFFERENCE_ROWS`; `order`
-# is all `table_experiment` reads from this, the single realisation it once
-# also labelled having been dropped (see PANEL_MONTE).
+# is what both of Table 3's panels read from this. The labels feed
+# `TEST_LABEL`, the column headers both panels share.
 TEST_PANEL: tuple[tuple[str, str, str], ...] = (
-    ('mean_return', 'Panel A: Mean return', 'pct'),
-    ('sharpe', 'Panel B: Sharpe ratio', 'num'),
-    ('crra_ce', 'Panel C: CRRA certainty equivalent', 'pct'))
+    ('mean_return', 'Mean return', 'pct'),
+    ('sharpe', 'Sharpe ratio', 'num'),
+    ('crra_ce', 'CRRA CE', 'pct'))
+TEST_LABEL: dict[str, str] = {key: label for key, label, _ in TEST_PANEL}
 
-# Table 3 is one panel: the Monte Carlo distribution is the point of the
-# table (see `experiment_thought`'s docstring), and the one-realisation
-# illustration it used to sit beside was dropped as clutter. No "Panel" or
-# letter, since there is only the one.
-PANEL_MONTE: str = 'Distribution of $t$-statistics across realisations'
+# Table 3, Panel A: `experiment_thought_panel_a.win_shares`' two rows, kept in
+# this order so Asset 1 (the fixed, zero-terminal-risk target) reads first.
+PANEL_WIN: str = 'Panel A: Share of realisations with the larger value'
+WIN_ROWS: dict[str, str] = {'asset_1_higher': 'Asset 1 higher (%)',
+                            'asset_2_higher': 'Asset 2 higher (%)'}
+
+# Table 3, Panel B: the Monte Carlo distribution is the point of this panel
+# (see `experiment_thought`'s docstring), and the one-realisation illustration
+# it used to sit beside was dropped as clutter.
+PANEL_MONTE: str = 'Panel B: Distribution of $t$-statistics across realisations'
 
 STAR_LEVEL: tuple[tuple[float, str], ...] = ((0.01, '***'), (0.05, '**'),
                                              (0.10, '*'))
@@ -411,19 +431,32 @@ def table_ex_post (summary: pd.DataFrame, returns: pd.DataFrame,
                                        pd.DataFrame|None]]:
     """Table 1: B&H and the proposed model's ex post rows.
 
+    Every proposed column is tested against both of B&H's columns
+    (`EX_POST_BENCHMARKS`), each in its own panel -- the proposed-strategy
+    list for both panels is read off the same `order` this builds Panel A
+    from, less whichever of `EX_POST_ORDER` is itself a benchmark, so the two
+    panels cannot drift out of sync with Panel A or with each other.
+
     Returns:
-        dict: `'performance'` (Panel A) and `'tests'` (Panel B, each proposed
-            row minus B&H), each a `(frame, kinds, stars)` triple ready for
-            `render_latex`.
+        dict: `'performance'` (Panel A), plus one entry per benchmark in
+            `EX_POST_BENCHMARKS` that is present in `summary.columns` --
+            keyed by that tuple's own key (today, `'tests_vs_max_sharpe'` and
+            `'tests_vs_qu'`), each proposed row minus that benchmark. Each
+            value a `(frame, kinds, stars)` triple ready for `render_latex`.
     """
     order: list[str] = [s for s in EX_POST_ORDER if s in summary.columns]
-    pairs: list[tuple[str, str, str]] = [
-        (EX_POST_LABEL[s], s, EX_POST_BENCHMARK)
-        for s in order if s != EX_POST_BENCHMARK]
-    return {'performance': _levels_block(summary, EX_POST_ORDER, EX_POST_LABEL),
-            'tests': _difference_block(returns, pairs,
-                                       'Panel B: Difference from B&H',
-                                       gamma=gamma, n_boot=n_boot, seed=seed)}
+    benchmarks: set[str] = {b for b, _, _ in EX_POST_BENCHMARKS}
+    proposed: list[str] = [s for s in order if s not in benchmarks]
+    blocks: dict[str, tuple[pd.DataFrame, pd.Series, pd.DataFrame|None]] = {
+        'performance': _levels_block(summary, EX_POST_ORDER, EX_POST_LABEL)}
+    for benchmark, key, title in EX_POST_BENCHMARKS:
+        if benchmark not in summary.columns:
+            continue
+        pairs: list[tuple[str, str, str]] = [
+            (EX_POST_LABEL[s], s, benchmark) for s in proposed]
+        blocks[key] = _difference_block(returns, pairs, title, gamma=gamma,
+                                        n_boot=n_boot, seed=seed)
+    return blocks
 
 
 def table_historical (summary: pd.DataFrame, returns: pd.DataFrame,
@@ -462,16 +495,50 @@ def table_historical (summary: pd.DataFrame, returns: pd.DataFrame,
     return blocks
 
 
+def table_experiment_panel_a (n_sim: int = 10000
+                              )-> tuple[pd.DataFrame, pd.Series, None]:
+    """Table 3, Panel A: how often each synthetic asset has the larger value.
+
+    Two assets calibrated to Table 1's `Max Sharpe, B&H N` and `CRRA, B&H N`
+    columns -- `experiment_thought_panel_a`'s docstring has the construction
+    and the calibration -- each with realistic path volatility, unlike Panel
+    B's Asset A. Deliberately not a hypothesis test: the paper does not yet
+    test Table 1's Max-Sharpe column against its CRRA column either, so this
+    only counts, out of `n_sim` realisations, which asset has the larger
+    value of each statistic.
+
+    Returns:
+        tuple: the frame indexed `(PANEL_WIN, row)`, the format kind per row
+            (`'share'` throughout), and no significance markers -- there is
+            no test here to star.
+    """
+    order: list[str] = [k for k, _, _ in TEST_PANEL]
+    draws: pd.DataFrame = thought_a.run_monte_carlo(n_sim=n_sim)
+    shares: pd.DataFrame = thought_a.win_shares(draws, metrics=tuple(order))
+    frame: pd.DataFrame = shares.loc[list(WIN_ROWS), order]
+    frame.index = pd.MultiIndex.from_tuples(
+        [(PANEL_WIN, WIN_ROWS[r]) for r in frame.index])
+    frame.columns = [TEST_LABEL[c] for c in order]
+    kind: pd.Series = pd.Series(
+        {(PANEL_WIN, WIN_ROWS[r]): 'share' for r in WIN_ROWS})
+    return frame, kind.reindex(frame.index), None
+
+
 def table_experiment (n_sim: int = 10000, gamma: float = thought.GAMMA,
                       distribution: str = 'gaussian'
                       )-> dict[str, tuple[pd.DataFrame, pd.Series,
                                           pd.DataFrame|None]]:
-    """Table 3: the Monte Carlo distribution the thought experiment turns on.
+    """Table 3: the thought experiment, two panels.
 
-    The one-realisation illustration -- the two assets' own numbers, and the
-    single difference test built from them -- used to sit in front of this as
-    two more panels, and took a `seed` and an `n_boot` to build. Dropped: the
-    Monte Carlo distribution is the point of the table (see
+    Panel A (`table_experiment_panel_a`) calibrates two synthetic assets to
+    Table 1's own Max-Sharpe-versus-CRRA gap and counts win shares. Panel B is
+    `experiment_thought`'s Monte Carlo distribution the thought experiment
+    turns on.
+
+    Panel B's one-realisation illustration -- the two assets' own numbers, and
+    the single difference test built from them -- used to sit in front of it
+    as two more panels, and took a `seed` and an `n_boot` to build. Dropped:
+    the Monte Carlo distribution is the point of the panel (see
     `experiment_thought`'s docstring), the pair's construction is stated in
     the table notes, and `experiment_thought`'s own CLI still prints one
     realisation for anyone who wants to see it directly. `run_monte_carlo`
@@ -480,13 +547,9 @@ def table_experiment (n_sim: int = 10000, gamma: float = thought.GAMMA,
     off, one HAC $t$-statistic being the point of each draw.
 
     Returns:
-        dict: `'montecarlo'` alone, a `(frame, kinds, stars)` triple ready
-            for `render_latex`. Still a dict, so a caller iterating blocks
-            does not need to change.
+        dict: `'panel_a'` and `'montecarlo'`, each a `(frame, kinds, stars)`
+            triple ready for `render_latex`.
     """
-    test_label: dict[str, str] = {'mean_return': 'Mean return',
-                                  'sharpe': 'Sharpe ratio',
-                                  'crra_ce': 'CRRA CE'}
     order: list[str] = [k for k, _, _ in TEST_PANEL]
 
     draws: pd.DataFrame = thought.run_monte_carlo(
@@ -506,11 +569,12 @@ def table_experiment (n_sim: int = 10000, gamma: float = thought.GAMMA,
     monte: pd.DataFrame = stats.loc[list(mc_rows), order]
     monte.index = pd.MultiIndex.from_tuples(
         [(PANEL_MONTE, mc_rows[r][0]) for r in monte.index])
-    monte.columns = [test_label[c] for c in monte.columns]
+    monte.columns = [TEST_LABEL[c] for c in monte.columns]
     monte_kind: pd.Series = pd.Series(
         {(PANEL_MONTE, mc_rows[r][0]): mc_rows[r][1] for r in mc_rows})
 
-    return {'montecarlo': (monte, monte_kind, None)}
+    return {'panel_a': table_experiment_panel_a(n_sim=n_sim),
+            'montecarlo': (monte, monte_kind, None)}
 
 
 def _period (returns: pd.DataFrame)-> str:
@@ -571,17 +635,27 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
         f'Returns are net of {backtest_cost_bps:.0f}~bps one-way transaction '
         f'cost; CRRA utility uses $\\gamma={gamma:g}$. Tests are one-sided and '
         'paired, $H_1$: the strategy beats its benchmark. '+inference)
+    # Table 1 only: Table 2 has no quadratic-utility column, so `choices`
+    # above stays as it is for Table 2's own notes.
+    choices_ex_post: str = (
+        f'Returns are net of {backtest_cost_bps:.0f}~bps one-way transaction '
+        f'cost; CRRA utility and quadratic utility both use '
+        f'$\\gamma={gamma:g}$. Tests are one-sided and paired, $H_1$: the '
+        'strategy beats its benchmark. '+inference)
     stars_note: str = ('$^{***}$, $^{**}$ and $^{*}$ denote significance at '
                        'the 1\\%, 5\\% and 10\\% levels.')
 
-    if (EX_POST_BENCHMARK in summary.columns
-            and any(s in summary.columns for s in EX_POST_ORDER[1:])):
+    ex_post_benchmark_cols: set[str] = {b for b, _, _ in EX_POST_BENCHMARKS}
+    ex_post_proposed_cols: list[str] = [s for s in EX_POST_ORDER
+                                        if s not in ex_post_benchmark_cols]
+    if (any(b in summary.columns for b in ex_post_benchmark_cols)
+            and any(s in summary.columns for s in ex_post_proposed_cols)):
         ex_post = table_ex_post(summary, returns, gamma=gamma, n_boot=n_boot,
                                 seed=seed)
         for name, (frame, _, _) in ex_post.items():
             _write(frame, f'table1_ex_post_{name}')
         _write_tex(render_latex(
-            [ex_post['performance'], ex_post['tests']],
+            list(ex_post.values()),
             caption='Ex post: Bielstein and Hanauer against the proposed '
                     'model.',
             label='tab:ex_post',
@@ -590,22 +664,26 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
                 'model, both formed with accounting data realised after the '
                 'formation date: a perfect-foresight benchmark, not an '
                 'implementable strategy. Panel B is each proposed column '
-                'minus B\\&H.',
-                'B\\&H: maximum Sharpe ratio on the implied cost of capital of '
-                'Gebhardt, Lee and Swaminathan (2001) plus momentum, with a '
-                'Ledoit--Wolf covariance and a 5\\% cap per name. The other '
-                'columns are the proposed model under a Max Sharpe or CRRA '
-                'objective, either held to at least B\\&H\'s effective number '
-                'of names, $N=1/\\sum_i w_i^2$, at each rebalance, or '
-                'unconstrained.',
-                choices,
+                'minus B\\&H, Max Sharpe; Panel C is each proposed column '
+                'minus B\\&H, Quadratic Utility.',
+                'B\\&H: the implied cost of capital of Gebhardt, Lee and '
+                'Swaminathan (2001) plus momentum, with a Ledoit--Wolf '
+                'covariance and a 5\\% cap per name, under either a '
+                'maximum-Sharpe-ratio or a maximum-quadratic-(mean-variance)'
+                '-utility objective. The proposed model\'s three columns -- '
+                'Max Sharpe, Quadratic Utility and CRRA, on its own '
+                'simulated mean and covariance (the first two) or whole '
+                'simulated distribution (CRRA) -- are each held to at least '
+                'B\\&H\'s effective number of names, $N=1/\\sum_i w_i^2$, '
+                'at each rebalance.',
+                choices_ex_post,
                 stars_note]),
             'table1_ex_post')
     else:
         warnings.warn('Table 1 skipped: summary.csv has no icc_mvo_ex_post '
-                      'column, or no proposed ex post row to set against it. '
-                      'Run them with `run --only`, then `run --rebuild`.',
-                      RuntimeWarning)
+                      'or icc_mvo_ex_post_qu column, or no proposed ex post '
+                      'row to set against either. Run them with `run '
+                      '--only`, then `run --rebuild`.', RuntimeWarning)
 
     if HISTORICAL_BENCHMARK in summary.columns:
         historical = table_historical(summary, returns, gamma=gamma,
@@ -638,23 +716,36 @@ def build_all (raw_dir: Path = RAW_BACKTEST_DIR,
         for name, (frame, _, _) in blocks.items():
             _write(frame, f'table3_experiment_{name}')
         _write_tex(render_latex(
-            [blocks['montecarlo']],
+            [blocks['panel_a'], blocks['montecarlo']],
             caption='A thought experiment: three tests, one dataset, three '
                     'answers.',
             label='tab:experiment',
             notes=[
-                'Two synthetic assets over 132 months, A minus B: A is '
-                'Gaussian with a 10\\% annual mean and 1\\% volatility, a '
+                'Panel A: two synthetic assets calibrated to Table 1\'s '
+                '`Max Sharpe, B\\&H $N$\' and `CRRA, B\\&H $N$\' columns. '
+                'Asset 1\'s terminal compound return is a fixed 15\\% a '
+                'year, every realisation; its first ten years draw at 15\\% '
+                'mean, 16.6\\% volatility, and the last year is set so '
+                'terminal wealth hits that target exactly. Asset 2\'s '
+                'target is itself drawn once per realisation, from a 25\\% '
+                'mean, 2\\% volatility Gaussian, so it keeps a little '
+                'terminal-wealth risk; its first ten years draw at 25\\% '
+                'mean, 19\\% volatility, built the same way. Both carry '
+                'realistic path risk, unlike Panel B\'s Asset A. No test is '
+                f'run: the share is a count over {n_sim:,} realisations of '
+                'which asset has the larger value.',
+                'Panel B: two synthetic assets over 132 months, A minus B: A '
+                'is Gaussian with a 10\\% annual mean and 1\\% volatility, a '
                 'steady compounder; B is Gaussian with a 40\\% mean and '
                 '40\\% volatility for 120 months, then set so that terminal '
                 'wealth is exactly $40\\times$ in every realisation. A '
-                'positive value favours the steadier asset.',
-                f'The distribution of $t$-statistics over {n_sim:,} '
+                'positive value favours the steadier asset. The '
+                f'distribution of $t$-statistics is over {n_sim:,} '
                 'realisations of the pair; "reject" is against the null of '
                 'no difference at the 5\\% level.',
-                f'CRRA utility uses $\\gamma={gamma:g}$. Each realisation\'s '
-                '$t$-statistic is diff / HAC standard error (Andrews and '
-                'Monahan, 1992); no bootstrap runs per realisation.']),
+                f'CRRA utility uses $\\gamma={gamma:g}$ throughout. Panel '
+                'B\'s $t$-statistic is diff / HAC standard error (Andrews '
+                'and Monahan, 1992); no bootstrap runs per realisation.']),
             'table3_experiment')
     return written
 

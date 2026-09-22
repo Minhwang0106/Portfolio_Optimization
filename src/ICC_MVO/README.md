@@ -25,6 +25,12 @@ python -m src.Empirical_Analysis.run --only equal_weight icc_mvo_ex_post
 The GLS implementation reproduces both of GLS's worked examples (GM 13.94%, JNJ
 7.12%; `tests/test_icc_mvo.py`).
 
+**`icc_mvo_ex_post_qu`** is the same three rows above -- ICC, expected return,
+covariance -- through quadratic (mean-variance) utility instead of maximum
+Sharpe (`Icc_Mvo.weight(objective='quadratic_utility')`, `utils.
+quadratic_utility_weight`). Not part of B&H's specification; this repo's own
+comparison point, isolating the objective on B&H's own inputs.
+
 ## Where the inputs differ from B&H's
 
 Each is a substitution for data this repo does not have. Each needs a sentence in
@@ -106,5 +112,6 @@ the Methods section.
 - `inputs.py`: every input built from the panels, one function each.
 - `model.py`: `Icc_Mvo` (panels in `Config`, one date per instance), and
   nothing else.
-- `utils.py`: `max_sharpe_weight`, the convex solve `Icc_Mvo.weight` calls,
-  and `_at`, a one-row lookup on a wide panel.
+- `utils.py`: `max_sharpe_weight` and `quadratic_utility_weight`, the two
+  convex solves `Icc_Mvo.weight` can call, and `_at`, a one-row lookup on a
+  wide panel.

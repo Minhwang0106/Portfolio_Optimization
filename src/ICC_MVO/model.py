@@ -41,7 +41,7 @@ import pandas as pd
 from constant import (
     accounting_path, monthly_price_path, daily_price_path, splits_path,
     industry_path, industry_roe_pool_path, icc_cov_month, icc_weight_cap,
-    icc_weight_floor,
+    icc_weight_floor, risk_aversion,
 )
 from ..panel import read_csv_file, book_equity
 from ..Proposed_Model.data_generator import _adjusted_shares, accounting_cutoff
@@ -56,7 +56,8 @@ from .inputs import (
     industry_target_roe, read_industry, panel_roe_pool, read_roe_pool,
     momentum, return_window,
 )
-from .utils import max_sharpe_weight, _at
+from .utils import max_sharpe_weight, quadratic_utility_weight, \
+    ICC_MVO_OBJECTIVES, _at
 
 
 class Icc_Mvo:
@@ -244,8 +245,11 @@ class Icc_Mvo:
         return pd.DataFrame(sigma, index=self.tickers, columns=self.tickers)
 
     def weight (self, cap: float = icc_weight_cap, long_only: bool = True,
-                min_weight: float = icc_weight_floor)-> pd.Series:
-        """The maximum-Sharpe book. See `max_sharpe_weight`.
+                min_weight: float = icc_weight_floor,
+                objective: str = 'max_sharpe',
+                risk_aversion: float = risk_aversion)-> pd.Series:
+        """B&H's book under a chosen objective. See `max_sharpe_weight`,
+        `quadratic_utility_weight`.
 
         Args:
             cap (float): Largest weight on one name. Defaults to
@@ -253,14 +257,33 @@ class Icc_Mvo:
             long_only (bool): Defaults to True, B&H's book.
             min_weight (float): Dust threshold. Defaults to
                 `constant.icc_weight_floor`.
+            objective (str): `'max_sharpe'` -- B&H's own rule -- or
+                `'quadratic_utility'`, maximum mean-variance utility on the
+                same `mu`/`sigma`: this repo's own comparison point, not part
+                of B&H's specification. Defaults to `'max_sharpe'`.
+            risk_aversion (float): The mean-variance risk-aversion
+                coefficient, used only under `objective='quadratic_utility'`.
+                Defaults to `constant.risk_aversion`.
 
         Returns:
             pd.Series: One weight per name that passed the screens, summing to
                 one; the ones the optimiser does not hold are exactly 0.
+
+        Raises:
+            ValueError: If `objective` is not one of `ICC_MVO_OBJECTIVES`, or
+                whatever the chosen solver raises.
         """
+        if objective not in ICC_MVO_OBJECTIVES:
+            raise ValueError(f'objective must be one of {ICC_MVO_OBJECTIVES}; '
+                             f'got {objective!r}')
         mu: pd.Series = self.expected_return()
         sigma: pd.DataFrame = self.covariance()
-        return pd.Series(max_sharpe_weight(mu.to_numpy(), sigma.to_numpy(),
-                                           cap=cap, min_weight=min_weight,
-                                           long_only=long_only),
-                         index=mu.index, name='weight')
+        if objective == 'max_sharpe':
+            weight: np.ndarray = max_sharpe_weight(
+                mu.to_numpy(), sigma.to_numpy(), cap=cap,
+                min_weight=min_weight, long_only=long_only)
+        else:
+            weight = quadratic_utility_weight(
+                mu.to_numpy(), sigma.to_numpy(), risk_aversion=risk_aversion,
+                cap=cap, min_weight=min_weight, long_only=long_only)
+        return pd.Series(weight, index=mu.index, name='weight')

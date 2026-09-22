@@ -24,15 +24,17 @@ import warnings
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from constant import icc_weight_cap, IMPLIED_RETURN_DIR
+from constant import icc_weight_cap, risk_aversion, IMPLIED_RETURN_DIR
 from ..EPO.model import EPO
 from ..PPP.model import PPP
 from ..ICC_MVO.model import Icc_Mvo
 from ..Proposed_Model.model import RIM_PortOp
-from ..Proposed_Model.utils.port_optimize import port_weight, moment_port_weight
+from ..Proposed_Model.utils.port_optimize import (
+    port_weight, moment_port_weight, moment_quadratic_utility_weight,
+)
 
 # What `replay_weight` can re-solve a dump under.
-REPLAY_OBJECTIVES: tuple[str, ...] = ('crra', 'max_sharpe')
+REPLAY_OBJECTIVES: tuple[str, ...] = ('crra', 'max_sharpe', 'quadratic_utility')
 MONTHS_PER_YEAR: int = 12
 
 # Below this the normalising denominator is treated as zero rather than divided
@@ -182,8 +184,9 @@ def ppp_weight (model: PPP, date: pd.Timestamp, tickers: list[str],
 
 
 def icc_mvo_weight (date: pd.Timestamp, tickers: list[str],
-                    cap: float = icc_weight_cap, long_only: bool = True
-                    )-> pd.Series:
+                    cap: float = icc_weight_cap, long_only: bool = True,
+                    objective: str = 'max_sharpe',
+                    risk_aversion: float = risk_aversion)-> pd.Series:
     """Bielstein-Hanauer ICC-MVO weights at one formation date.
 
     A pass-through, like `proposed_weight`: `Icc_Mvo.weight` already returns a
@@ -199,10 +202,20 @@ def icc_mvo_weight (date: pd.Timestamp, tickers: list[str],
             `constant.icc_weight_cap`, B&H's 5%; 1 removes it.
         long_only (bool): B&H's long-only book. False solves the unconstrained
             tangency portfolio instead, which takes no cap. Defaults to True.
+        objective (str): `'max_sharpe'` -- B&H's own rule -- or
+            `'quadratic_utility'`, passed to `Icc_Mvo.weight`. Defaults to
+            `'max_sharpe'`.
+        risk_aversion (float): Passed to `Icc_Mvo.weight`; used only under
+            `objective='quadratic_utility'`. Defaults to
+            `constant.risk_aversion`.
 
     Returns:
         pd.Series: One weight per surviving ticker, summing to one. Names the
             optimiser left under `constant.icc_weight_floor` are exactly 0.
+
+    Raises:
+        ValueError: If `objective` is not one of `ICC_MVO.utils.
+            ICC_MVO_OBJECTIVES`.
 
     Note:
         **Lookahead.** The `constant.icc_explicit_years` (11) explicit earnings
@@ -218,7 +231,9 @@ def icc_mvo_weight (date: pd.Timestamp, tickers: list[str],
         >>> float(w.sum()), float(w.max()) <= 0.05
         (1.0, True)
     """
-    return Icc_Mvo(date, tickers).weight(cap=cap, long_only=long_only)
+    return Icc_Mvo(date, tickers).weight(cap=cap, long_only=long_only,
+                                         objective=objective,
+                                         risk_aversion=risk_aversion)
 
 
 def proposed_weight (date: pd.Timestamp, tickers: list[str],
@@ -332,16 +347,22 @@ def replay_weight (date: pd.Timestamp, tickers: list[str], variant: str,
             the problem the rows are meant to share. Present for the engine's
             signature.
         variant (str): `'historical'` or `'ex_post'`, the dump's prefix.
-        objective (str): `'crra'` solves `port_weight`, the model as specified;
-            `'max_sharpe'` solves `moment_port_weight`, B&H's rule on the
-            simulation's mean and covariance. Defaults to `'crra'`.
+        objective (str): `'crra'` solves `port_weight`, the model as
+            specified; `'max_sharpe'` solves `moment_port_weight`, B&H's rule
+            on the simulation's mean and covariance; `'quadratic_utility'`
+            solves `moment_quadratic_utility_weight`, mean-variance utility on
+            the same mean and covariance. Defaults to `'crra'`.
         n_eff (pd.Series | None): Effective-N floor per formation date, from
             `run.effective_n_target`. None leaves breadth free. Defaults to
             None.
         rf (pd.Series | None): Monthly risk-free rate from `data.risk_free`.
             Under `'max_sharpe'` the formation month's rate is compounded to a
             year and subtracted from the annual implied returns, as `Icc_Mvo`
-            does for B&H. Required there, unused otherwise. Defaults to None.
+            does for B&H. Required there; unused under `'crra'` and
+            `'quadratic_utility'`, whose objective is invariant to shifting
+            every mean by a constant under the fully-invested budget
+            constraint -- see `moment_quadratic_utility_weight`. Defaults to
+            None.
         dump_dir (Path): Where the dumps are. Defaults to
             `constant.IMPLIED_RETURN_DIR`.
 
@@ -378,6 +399,9 @@ def replay_weight (date: pd.Timestamp, tickers: list[str], variant: str,
                              'comparator had not formed a book yet')
     if objective == 'crra':
         return port_weight(draws.T, n_eff=target).astype(float)
+    if objective == 'quadratic_utility':
+        return moment_quadratic_utility_weight(draws.T,
+                                               n_eff=target).astype(float)
     if rf is None:
         raise ValueError("objective 'max_sharpe' needs the risk-free rate")
     rf_year: float = (1.0+float(rf.loc[:date].iloc[-1]))**MONTHS_PER_YEAR-1.0

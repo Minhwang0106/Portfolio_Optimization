@@ -1,6 +1,6 @@
 """Run every strategy over the sample period and write the comparison out.
 
-    python -m src.Empirical_Analysis.run                      # all eleven
+    python -m src.Empirical_Analysis.run                      # all twelve
     python -m src.Empirical_Analysis.run --n-workers 5
     python -m src.Empirical_Analysis.run --only epo ppp --verbose
     python -m src.Empirical_Analysis.run --rebuild            # summary only
@@ -10,9 +10,9 @@ weights a finished run already wrote and recomputes everything downstream of
 them, in seconds rather than hours, without importing a single model. See
 `rebuild`.
 
-Eleven strategies: six weighting rules, and five re-solves of the proposed
+Twelve strategies: seven weighting rules, and five re-solves of the proposed
 model that hold it to a comparator's breadth, put its moments through B&H's
-rule, or both.
+maximum-Sharpe rule or a quadratic-utility rule, or both.
 
 Every weighting rule here is long-only and fully invested by default, which is
 what makes the return columns comparable at all; `--long-short` restores the
@@ -47,6 +47,10 @@ selected against whichever book is built, never across the two -- see
   `proposed_ex_post` elicits its moments from -- so it is a point-estimate
   benchmark under perfect earnings foresight, read against the ex post rows
   and never against the tradeable ones.
+* `icc_mvo_ex_post_qu` -- the same construction, same inputs, quadratic
+  (mean-variance) utility instead of maximum Sharpe -- this repo's own
+  comparison point, not part of B&H's specification. Same schedule and cap.
+  **Lookahead; not a strategy**, for the same reason as `icc_mvo_ex_post`.
 * `proposed_historical` -- the residual income model, quarterly, moments
   elicited from the training window. **This is the tradeable one.**
 * `proposed_ex_post` -- the same model with `ex_post=True`, i.e. moments
@@ -57,15 +61,17 @@ selected against whichever book is built, never across the two -- see
   be worth. Read it as a ceiling, never as a result.
 
 The five re-solved rows read the proposed model back from the implied-return
-dumps (`strategy.replay_weight`), on the quarterly calendar, and never simulate:
+dumps (`strategy.replay_weight`), on the quarterly calendar, never simulate,
+and every one of them carries a breadth floor:
 
 * `proposed_historical_epo_n`, `proposed_historical_ppp_n` -- CRRA, held at
   each rebalance date to EPO's or PPP's effective N at that date.
 * `proposed_ex_post_icc_n` -- CRRA, held to `icc_mvo_ex_post`'s effective N.
 * `proposed_ex_post_msr_icc_n` -- maximum Sharpe on the simulation's mean and
   covariance, held to the same breadth: B&H's rule on this model's moments.
-* `proposed_ex_post_msr` -- the same maximum-Sharpe rule with no breadth floor,
-  the unconstrained counterpart of `proposed_ex_post`.
+* `proposed_ex_post_qu_icc_n` -- quadratic utility on the same mean and
+  covariance, held to the same breadth: `icc_mvo_ex_post_qu`'s rule on this
+  model's moments.
 
 Each matched row needs its comparator's books, from this run or from `weights_<comparator>.csv`
 in `--out`, which is how the rows are added to a finished run:
@@ -110,16 +116,21 @@ from .engine import backtest, quarter_ends, BacktestResult, WeightFn
 from .metrics import summarise, cumulative_wealth
 
 STRATEGIES: tuple[str, ...] = ('equal_weight', 'epo', 'ppp', 'icc_mvo_ex_post',
+                               'icc_mvo_ex_post_qu',
                                'proposed_historical', 'proposed_ex_post',
                                'proposed_historical_epo_n',
                                'proposed_historical_ppp_n',
                                'proposed_ex_post_msr_icc_n',
-                               'proposed_ex_post_icc_n',
-                               'proposed_ex_post_msr')
+                               'proposed_ex_post_qu_icc_n',
+                               'proposed_ex_post_icc_n')
 
 # The two that call `RIM_PortOp`, and the elicitation window each one uses.
 _PROPOSED: dict[str, bool] = {'proposed_historical': False,
                               'proposed_ex_post': True}
+
+# The two that call `Icc_Mvo`, and the objective each one solves.
+_ICC_MVO: dict[str, str] = {'icc_mvo_ex_post': 'max_sharpe',
+                            'icc_mvo_ex_post_qu': 'quadratic_utility'}
 
 # The ones re-solved from the dumps: (dump variant, objective, comparator whose
 # effective N the book is held to at each date, or None for no floor). See
@@ -128,8 +139,9 @@ _REPLAY: dict[str, tuple[str, str, str|None]] = {
     'proposed_historical_epo_n': ('historical', 'crra', 'epo'),
     'proposed_historical_ppp_n': ('historical', 'crra', 'ppp'),
     'proposed_ex_post_msr_icc_n': ('ex_post', 'max_sharpe', 'icc_mvo_ex_post'),
-    'proposed_ex_post_icc_n': ('ex_post', 'crra', 'icc_mvo_ex_post'),
-    'proposed_ex_post_msr': ('ex_post', 'max_sharpe', None)}
+    'proposed_ex_post_qu_icc_n': ('ex_post', 'quadratic_utility',
+                                  'icc_mvo_ex_post'),
+    'proposed_ex_post_icc_n': ('ex_post', 'crra', 'icc_mvo_ex_post')}
 
 
 def _dated_seed (base: int, date: pd.Timestamp)-> int:
@@ -301,7 +313,7 @@ def _build (label: str, params: dict[str, Any]
                         long_only=params['long_only']),
                 None)
 
-    if label == 'icc_mvo_ex_post':
+    if label in _ICC_MVO:
         from ..ICC_MVO.model import Icc_Mvo
         from .strategy import icc_mvo_weight
         Icc_Mvo.Config()
@@ -312,7 +324,9 @@ def _build (label: str, params: dict[str, Any]
         schedule: list[pd.Timestamp] = (
             [d for d in params['dates'] if d.month == 6]
             if params['icc_annual'] else quarter_ends(params['dates']))
-        return partial(icc_mvo_weight, cap=params['icc_cap']), schedule
+        return (partial(icc_mvo_weight, cap=params['icc_cap'],
+                        objective=_ICC_MVO[label]),
+                schedule)
 
     if label in _PROPOSED:
         from ..Proposed_Model.model import RIM_PortOp

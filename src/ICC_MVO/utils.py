@@ -1,16 +1,20 @@
-"""The maximum-Sharpe solve `model.Icc_Mvo` calls, and a small panel helper.
+"""The two objective solves `model.Icc_Mvo` calls, and a small panel helper.
 
-Kept out of `model.py` so that module holds only `Icc_Mvo` itself: these two
-functions take plain arrays and a plain frame, know nothing about the panels or
-the class, and are what `tests/test_icc_mvo.py` exercises directly against
-closed-form answers. `Proposed_Model.utils.port_optimize.moment_port_weight`
-calls `max_sharpe_weight` too, to put the proposed model's simulated moments
-through B&H's own rule.
+Kept out of `model.py` so that module holds only `Icc_Mvo` itself: these
+functions take plain arrays and a plain frame, know nothing about the panels
+or the class, and are what `tests/test_icc_mvo.py` exercises directly against
+closed-form answers. `Proposed_Model.utils.port_optimize` calls both
+`max_sharpe_weight` and `quadratic_utility_weight` too
+(`moment_port_weight`/`moment_quadratic_utility_weight`), to put the proposed
+model's simulated moments through B&H's own rules.
 """
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from constant import icc_weight_cap, icc_weight_floor
+from constant import icc_weight_cap, icc_weight_floor, risk_aversion
+
+# `Icc_Mvo.weight`'s valid `objective` values.
+ICC_MVO_OBJECTIVES: tuple[str, ...] = ('max_sharpe', 'quadratic_utility')
 
 
 def _best_return_book (mu: np.ndarray, cap: float)-> np.ndarray:
@@ -169,6 +173,101 @@ def max_sharpe_weight (mu: np.ndarray, sigma: np.ndarray,
         raise ValueError(f'maximum-Sharpe solve did not converge: {res.message}')
     y: np.ndarray = np.clip(res.x, 0.0, None)
     return _floor_and_cap(y/y.sum(), cap, min_weight)
+
+
+def quadratic_utility_weight (mu: np.ndarray, sigma: np.ndarray,
+                              risk_aversion: float = risk_aversion,
+                              cap: float = icc_weight_cap,
+                              min_weight: float = icc_weight_floor,
+                              long_only: bool = True,
+                              n_eff: float|None = None)-> np.ndarray:
+    """Maximum mean-variance-utility book: B&H's inputs, a utility instead of a ratio.
+
+    An alternative to `max_sharpe_weight` on the same `(mu, sigma)`: maximise
+    `mu'w - (risk_aversion/2) w'Sigma w` rather than the Sharpe ratio. Unlike
+    the Sharpe ratio, this objective is already concave in `w`, so it needs
+    no substitution to become solvable by a generic QP method -- plain SLSQP
+    with an analytic gradient, the same way `Proposed_Model.utils.
+    port_optimize.port_weight` (CRRA) is solved. Same calling convention as
+    `max_sharpe_weight` otherwise: long-only, capped, an optional
+    effective-N floor folded into the cap the same way -- a drop-in
+    alternative objective, not a different portfolio problem.
+
+    One `risk_aversion` is consistent whether `mu`/`sigma` are monthly (as
+    here) or annual (as `Proposed_Model.utils.port_optimize.
+    moment_quadratic_utility_weight` takes them): the objective's argmax
+    does not move if `mu` and `sigma` are jointly rescaled by one positive
+    factor -- annualising monthly moments by the usual `x12`/`x12`
+    convention multiplies the whole objective by 12 and leaves its argmax
+    untouched.
+
+    Args:
+        mu (np.ndarray): Expected excess returns, shape (n,).
+        sigma (np.ndarray): Covariance matrix, shape (n, n), positive definite.
+        risk_aversion (float): The mean-variance risk-aversion coefficient.
+            Defaults to `constant.risk_aversion` -- the same gamma CRRA uses.
+        cap (float): Largest weight on one name. Defaults to
+            `constant.icc_weight_cap`; 1 leaves the book uncapped.
+        min_weight (float): Weights below this are set to zero and the rest
+            renormalised. Defaults to `constant.icc_weight_floor`.
+        long_only (bool): False solves the closed-form budget-only problem
+            instead (no cap, no box bounds): `w = (Sigma^-1(mu - nu*1)) /
+            risk_aversion`, with `nu` set by `sum(w) = 1`. Defaults to True.
+        n_eff (float | None): Smallest effective number of names, `1 /
+            sum(w^2)`. Tightens the cap to `min(cap, 1/n_eff)` before solving,
+            exactly as `max_sharpe_weight` does. Long-only only. Defaults to
+            None.
+
+    Returns:
+        np.ndarray: Weights summing to one, in `mu`'s order.
+
+    Raises:
+        ValueError: If `sigma`'s shape does not match `mu`; if there are too
+            few names to be fully invested under the (possibly
+            `n_eff`-tightened) cap; if `n_eff` is given without `long_only`;
+            or if the solver does not converge.
+
+    Example:
+        >>> quadratic_utility_weight(np.array([0.02, 0.01]),
+        ...                          np.diag([0.04, 0.01]), risk_aversion=5.0,
+        ...                          cap=1.0).round(3)
+        array([0.24, 0.76])
+    """
+    mu = np.asarray(mu, dtype=float).reshape(-1)
+    sigma = np.asarray(sigma, dtype=float)
+    n: int = len(mu)
+    if sigma.shape != (n, n):
+        raise ValueError(f'{n} means against a covariance matrix of shape '
+                         f'{sigma.shape}')
+
+    if not long_only:
+        if cap < 1 or n_eff is not None:
+            raise ValueError('the weight cap and the effective-N floor are '
+                             'only implemented for the long-only book')
+        ones: np.ndarray = np.ones(n)
+        solved: np.ndarray = np.linalg.solve(sigma, np.column_stack([mu, ones]))
+        sigma_inv_mu, sigma_inv_one = solved[:, 0], solved[:, 1]
+        nu: float = (float(ones@sigma_inv_mu)-risk_aversion)/float(ones@sigma_inv_one)
+        return (sigma_inv_mu-nu*sigma_inv_one)/risk_aversion
+
+    if n_eff is not None:
+        cap = min(cap, 1.0/float(n_eff))
+    if cap*n < 1-1e-12:
+        raise ValueError(f'{n} names cannot make a fully invested book under a '
+                         f'{cap:.2%} cap')
+
+    constraints: list[dict] = [{'type': 'eq', 'fun': lambda w: np.sum(w)-1.0,
+                                'jac': lambda w: np.ones(n)}]
+    res = minimize(
+        lambda w: -(mu@w-0.5*risk_aversion*(w@sigma@w)), np.ones(n)/n,
+        jac=lambda w: -(mu-risk_aversion*(sigma@w)), method='SLSQP',
+        bounds=[(0.0, cap)]*n, constraints=constraints,
+        options={'maxiter': 1000, 'ftol': 1e-12})
+    if not res.success:
+        raise ValueError('quadratic-utility solve did not converge: '
+                         f'{res.message}')
+    w: np.ndarray = np.clip(res.x, 0.0, None)
+    return _floor_and_cap(w/w.sum(), cap, min_weight)
 
 
 def _at (frame: pd.DataFrame, when: pd.Timestamp, names: pd.Index)-> pd.Series:
