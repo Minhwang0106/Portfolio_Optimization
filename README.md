@@ -3,9 +3,9 @@
 Code and data pipeline for a residual-income-model (RIM) portfolio construction method,
 benchmarked against Bielstein & Hanauer's ICC mean-variance portfolio, Enhanced Portfolio
 Optimization (EPO) and the Parametric Portfolio Policy (PPP) on a point-in-time S&P 500
-universe. Written to accompany the paper *Value-Investing Portfolio Optimization: A
-Fundamental-Based Approach* by Minh Quang Nguyen, Thu Thuy Cu and Cuong Quoc Nguyen — see
-[Citation](#citation).
+universe. Written to accompany the paper *Value-Investing Portfolio Optimization: Accounting
+for the Uncertainty of Fundamentals* by Minh Quang Nguyen, Thu Thuy Cu and Cuong Quoc Nguyen
+— see [Citation](#citation).
 
 ## What's here
 
@@ -185,7 +185,7 @@ If you use this code, please cite:
 ```bibtex
 @unpublished{nguyen2026value,
   author = {Nguyen, Minh Quang and Cu, Thu Thuy and Nguyen, Cuong Quoc},
-  title  = {Value-Investing Portfolio Optimization: A Fundamental-Based Approach},
+  title  = {Value-Investing Portfolio Optimization: Accounting for the Uncertainty of Fundamentals},
   year   = {2026},
   note   = {Working paper}
 }
